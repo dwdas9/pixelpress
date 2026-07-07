@@ -2,6 +2,26 @@
 
 Author: D Das
 
+## Milestones
+
+Class B1 — the only roadmap this project keeps; a table rewritten in
+place, never a growing prose document. Reordered after M2: input
+handling and the plan preview moved ahead of the executor, so there
+was something interactive sooner. See `CURRENT_STATE.md` for which
+one is active right now and what's next inside it.
+
+| # | Milestone | Status | Scope |
+|---|---|---|---|
+| M1 | Scaffold | Done | Solution, `Directory.Build.props`, format registry + capability matrix, presets, Avalonia shell with DI, engine tests. |
+| M2 | Planner | Done | Job contracts, path scanning, file classification, nested folders, conflict resolution, plan summary. Pure logic, tested. |
+| M3 | Input + plan preview | Done | Drag-and-drop, file/folder pickers, plan preview screen (count, size estimate, output folder, fallback/rename/skip callouts). Optimize button present but disabled — no executor yet. |
+| M4 | Executor | Done | Magick.NET adapter, worker pool, atomic writes, metadata preservation, cancellation, per-file results. |
+| M5 | Wire executor into plan preview | Done | Optimize button goes live: progress, cancel, completion summary, calm error list. |
+| M6 | UI redesign | Done | Design system (palette, typography, cards, button hierarchy), all five states restyled, drag-over feedback. Lossless-only scope reaffirmed; no functional changes. |
+| M7 | Premium UI | Done | Light/dark theming (theme dictionaries + `DynamicResource`), header + status bar structure, file table in the plan preview, empty-state copy, micro-transitions. Deferred: live per-file queue statuses (needs engine per-item events), vector logo (packaging milestone). |
+| M8 | Settings persistence + advanced panel | Not started | Format override, resize, strip metadata, overwrite originals. |
+| M9 | Packaging | Not started | Self-contained publish for win-x64 / osx-arm64 / osx-x64, icon, final polish. |
+
 ## Shape
 
 Single-process desktop app. Two assemblies plus tests:
