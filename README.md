@@ -7,8 +7,12 @@ Author: D Das
 
 ## Status
 
-Milestone 1 — solution scaffold, format registry, presets, app shell.
-See `docs/ROADMAP.md` for the plan.
+See `CURRENT_STATE.md` for what's active right now, and
+`docs/ARCHITECTURE.md`'s milestone table for the full plan.
+
+This project follows the LLM Amnesia Antidote protocol: the repository
+is the only source of truth for project memory. Start with
+`MASTER_PROTOCOL.md` and `SESSION_START.md`.
 
 ## Build
 
@@ -34,7 +38,8 @@ convert HEIC to AVIF or JPEG instead.
     src/PixelPress.Core       engine: formats, presets, planning, processing (no UI)
     src/PixelPress.Desktop    Avalonia UI (MVVM)
     tests/                    engine tests (xunit)
-    docs/                     architecture and roadmap
+    docs/                     architecture (living map + milestone table)
+    decisions/                one ADR per irreversible architectural call
 
 ## Verifying codecs
 
