@@ -1,0 +1,43 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{1C25D160-905E-4652-94E2-E5B1C0C5193E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PixelPress.Core", "src\PixelPress.Core\PixelPress.Core.csproj", "{44458764-9EED-4B39-8ED7-005D9ECC6F71}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PixelPress.Desktop", "src\PixelPress.Desktop\PixelPress.Desktop.csproj", "{16541701-F150-4757-A170-CFA05CF6185B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{D283BA74-E39D-4805-B3EF-954C328516D1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PixelPress.Core.Tests", "tests\PixelPress.Core.Tests\PixelPress.Core.Tests.csproj", "{F0F8C959-D25A-4C64-B326-347EB0319FDD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{44458764-9EED-4B39-8ED7-005D9ECC6F71}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44458764-9EED-4B39-8ED7-005D9ECC6F71}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44458764-9EED-4B39-8ED7-005D9ECC6F71}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44458764-9EED-4B39-8ED7-005D9ECC6F71}.Release|Any CPU.Build.0 = Release|Any CPU
+		{16541701-F150-4757-A170-CFA05CF6185B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{16541701-F150-4757-A170-CFA05CF6185B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{16541701-F150-4757-A170-CFA05CF6185B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{16541701-F150-4757-A170-CFA05CF6185B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F0F8C959-D25A-4C64-B326-347EB0319FDD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F0F8C959-D25A-4C64-B326-347EB0319FDD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F0F8C959-D25A-4C64-B326-347EB0319FDD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F0F8C959-D25A-4C64-B326-347EB0319FDD}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{44458764-9EED-4B39-8ED7-005D9ECC6F71} = {1C25D160-905E-4652-94E2-E5B1C0C5193E}
+		{16541701-F150-4757-A170-CFA05CF6185B} = {1C25D160-905E-4652-94E2-E5B1C0C5193E}
+		{F0F8C959-D25A-4C64-B326-347EB0319FDD} = {D283BA74-E39D-4805-B3EF-954C328516D1}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PixelPress.Core is the UI-agnostic engine.
+    Rules:
+      - No reference to Avalonia or any UI assembly, ever.
+      - Magick.NET is added here in M3, wrapped behind an internal codec
+        interface so the public API never exposes ImageMagick types.
+  -->
+  <PropertyGroup>
+    <RootNamespace>PixelPress.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Q8 build: half the memory of Q16, imperceptible for consumer
+         photos. See docs/ARCHITECTURE.md. Kept current deliberately -
+         Magick.NET bundles many third-party delegate libraries (libpng,
+         libwebp, etc.) and NuGet's security audit flags known-vulnerable
+         older releases; staying on a recent patch avoids that. -->
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="14.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets tests substitute a fake IImageCodec to verify JobExecutor's
+         orchestration (parallelism, atomic writes, cancellation, error
+         isolation) without depending on a working Magick.NET reference. -->
+    <InternalsVisibleTo Include="PixelPress.Core.Tests" />
+  </ItemGroup>
+
+</Project>
