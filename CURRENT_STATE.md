@@ -2,7 +2,7 @@
 
 Class C — overwritten in full at every checkpoint. Not a narrative.
 
-Last updated: 2026-07-07
+Last updated: 2026-07-07 (session-end checkpoint)
 
 ## Current Milestone
 
@@ -10,11 +10,17 @@ M8 — Settings persistence + advanced panel (not started).
 
 ## Last Completed Action
 
-M7 (Premium UI) shipped: light/dark theming via theme dictionaries and
-`DynamicResource`, header + status bar structure, file table in the
-plan preview, empty-state copy, micro-transitions. Deferred out of M7:
-live per-file queue statuses (needs engine per-item events — likely an
-M8/M9 concern) and a vector logo (packaging milestone, M9).
+Bootstrapped the LAA document set itself (commit `a0086be`):
+`MASTER_PROTOCOL.md`, the milestone table folded into
+`docs/ARCHITECTURE.md`, `decisions/0001`–`0004` retrofitted for calls
+already made, this file, `RELEASES.md`, `DEVELOPMENT.md`, and
+`SESSION_START.md`/`SESSION_END.md`. No M8 code work has started yet —
+before that, the last engine/UI work completed was M7 (Premium UI):
+light/dark theming via theme dictionaries and `DynamicResource`,
+header + status bar structure, file table in the plan preview,
+empty-state copy, micro-transitions. Deferred out of M7: live per-file
+queue statuses (needs engine per-item events — likely an M8/M9
+concern) and a vector logo (packaging milestone, M9).
 
 ## Current Blockers
 
