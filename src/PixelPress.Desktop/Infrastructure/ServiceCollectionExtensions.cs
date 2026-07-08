@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PixelPress.Core.Execution;
 using PixelPress.Core.Planning;
 using PixelPress.Core.Services;
+using PixelPress.Core.Settings;
 using PixelPress.Desktop.ViewModels;
 
 namespace PixelPress.Desktop.Infrastructure;
@@ -10,7 +11,7 @@ namespace PixelPress.Desktop.Infrastructure;
 /// The composition root. Every service and view model registration in the
 /// application lives here and nowhere else, so the object graph can be
 /// read in one place. Core types are registered as they arrive in later
-/// milestones (planner in M2, engine in M3, settings store in M6).
+/// milestones (planner in M2, engine in M3, settings store in M8).
 /// </summary>
 public static class ServiceCollectionExtensions
 {
@@ -22,6 +23,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFileSystem, PhysicalFileSystem>();
         services.AddSingleton<JobPlanner>();
         services.AddSingleton<JobExecutor>();
+
+        var settingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "PixelPress", "settings.json");
+        services.AddSingleton<ISettingsStore>(_ => new JsonSettingsStore(settingsPath));
 
         // View models
         services.AddSingleton<MainWindowViewModel>();

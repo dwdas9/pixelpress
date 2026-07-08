@@ -52,4 +52,12 @@ public sealed record JobRequest
     /// <summary>Mirror source folder structure inside the output
     /// directory (default) instead of flattening.</summary>
     public bool PreserveFolderStructure { get; init; } = true;
+
+    /// <summary>Shrink images whose longer edge exceeds
+    /// <see cref="ResizeMaxDimensionPixels"/>. A pixel-count reduction,
+    /// independent of the lossless preset/quality system (see ADR-0005).
+    /// Never upscales a smaller source.</summary>
+    public bool ResizeEnabled { get; init; }
+
+    public int ResizeMaxDimensionPixels { get; init; } = 2048;
 }

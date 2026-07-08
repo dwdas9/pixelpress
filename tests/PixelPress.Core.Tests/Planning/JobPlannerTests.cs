@@ -198,6 +198,15 @@ public sealed class JobPlannerTests
     }
 
     [Fact]
+    public void Resize_with_a_non_positive_max_dimension_is_rejected()
+    {
+        var planner = new JobPlanner(new FakeFileSystem().AddFile("/a.jpg"));
+        var request = Request("/a.jpg") with { ResizeEnabled = true, ResizeMaxDimensionPixels = 0 };
+
+        Assert.Throws<ArgumentException>(() => planner.CreatePlan(request));
+    }
+
+    [Fact]
     public void Plan_totals_aggregate_correctly()
     {
         var fs = new FakeFileSystem()

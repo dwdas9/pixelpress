@@ -37,6 +37,10 @@ internal sealed record CodecRequest
     public required OptimizationPreset Preset { get; init; }
 
     public required MetadataPolicy MetadataPolicy { get; init; }
+
+    public bool ResizeEnabled { get; init; }
+
+    public int ResizeMaxDimensionPixels { get; init; } = 2048;
 }
 
 /// <summary>The outcome of one transcode attempt.</summary>

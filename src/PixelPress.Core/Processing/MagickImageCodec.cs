@@ -45,6 +45,7 @@ internal sealed class MagickImageCodec : IImageCodec
         using var image = new MagickImage(request.SourcePath);
 
         ApplyMetadataPolicy(image, request.MetadataPolicy);
+        ApplyResize(image, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
         ApplyQuality(image, request.OutputFormat, request.Preset);
         image.Format = ToMagickFormat(request.OutputFormat);
         image.Write(request.DestinationPath);
@@ -66,6 +67,7 @@ internal sealed class MagickImageCodec : IImageCodec
             // method exists to avoid.
             using var firstFrame = (MagickImage)collection[0].Clone();
             ApplyMetadataPolicy(firstFrame, request.MetadataPolicy);
+            ApplyResize(firstFrame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
             ApplyQuality(firstFrame, request.OutputFormat, request.Preset);
             firstFrame.Format = ToMagickFormat(request.OutputFormat);
             firstFrame.Write(request.DestinationPath);
@@ -79,6 +81,7 @@ internal sealed class MagickImageCodec : IImageCodec
         foreach (var frame in collection)
         {
             ApplyMetadataPolicy(frame, request.MetadataPolicy);
+            ApplyResize(frame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
             ApplyQuality(frame, request.OutputFormat, request.Preset);
             frame.Format = ToMagickFormat(request.OutputFormat);
         }
@@ -95,6 +98,20 @@ internal sealed class MagickImageCodec : IImageCodec
             image.Strip();
         }
         // Preserve is the library's default; nothing to do.
+    }
+
+    /// <summary>Shrinks the image so neither dimension exceeds
+    /// <paramref name="maxDimension"/>, preserving aspect ratio.
+    /// <c>Less = true</c> means the geometry only applies when the image
+    /// is larger than it — a smaller source is never upscaled.</summary>
+    private static void ApplyResize(IMagickImage<byte> image, bool enabled, int maxDimension)
+    {
+        if (!enabled)
+        {
+            return;
+        }
+
+        image.Resize(new MagickGeometry((uint)maxDimension, (uint)maxDimension) { Less = true });
     }
 
     private static void ApplyQuality(

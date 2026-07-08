@@ -5,6 +5,7 @@ using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
 using PixelPress.Core.Presets;
+using PixelPress.Core.Settings;
 
 namespace PixelPress.Desktop.ViewModels;
 
@@ -31,13 +32,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private JobRequest? _currentRequest;
     private CancellationTokenSource? _runCts;
 
-    public MainWindowViewModel(JobPlanner planner, JobExecutor executor)
+    public MainWindowViewModel(JobPlanner planner, JobExecutor executor, ISettingsStore settingsStore)
     {
         _planner = planner;
         _executor = executor;
         AvailablePresets = Presets.All;
-        _selectedPreset = Presets.Balanced;
+        AvailableTargetFormats = BuildAvailableTargetFormats();
         SupportedInputSummary = BuildSupportedInputSummary();
+
+        var settings = settingsStore.Load();
+        _selectedPreset = Presets.Get(settings.Preset);
+        _selectedTargetFormatOption = AvailableTargetFormats.FirstOrDefault(
+            f => f.Id == settings.TargetFormat) ?? AvailableTargetFormats[0];
+        _stripMetadata = settings.MetadataPolicy == MetadataPolicy.Strip;
+        _overwriteOriginals = settings.OutputPolicy == OutputPolicy.OverwriteOriginals;
+        _resizeEnabled = settings.ResizeEnabled;
+        _resizeMaxDimensionPixels = settings.ResizeMaxDimensionPixels;
     }
 
     public IReadOnlyList<OptimizationPreset> AvailablePresets { get; }
@@ -54,6 +64,102 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             _ = ReplanAsync();
         }
     }
+
+    // --- Advanced panel --------------------------------------------------
+
+    /// <summary>One selectable entry in the format-override list; <see
+    /// cref="Id"/> is null for "keep original format."</summary>
+    public sealed record FormatOption(string DisplayName, ImageFormatId? Id);
+
+    public IReadOnlyList<FormatOption> AvailableTargetFormats { get; }
+
+    [ObservableProperty]
+    private FormatOption _selectedTargetFormatOption;
+
+    partial void OnSelectedTargetFormatOptionChanged(FormatOption value)
+    {
+        if (Stage == WorkflowStage.PlanReady)
+        {
+            _ = ReplanAsync();
+        }
+    }
+
+    [ObservableProperty]
+    private bool _stripMetadata;
+
+    partial void OnStripMetadataChanged(bool value)
+    {
+        if (Stage == WorkflowStage.PlanReady)
+        {
+            _ = ReplanAsync();
+        }
+    }
+
+    [ObservableProperty]
+    private bool _overwriteOriginals;
+
+    partial void OnOverwriteOriginalsChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowOutputFolderControl));
+        if (Stage == WorkflowStage.PlanReady)
+        {
+            _ = ReplanAsync();
+        }
+    }
+
+    /// <summary>Hides the "Change output folder…" control once the user
+    /// chooses to overwrite originals in place — there is no output
+    /// folder to change.</summary>
+    public bool ShowOutputFolderControl => !OverwriteOriginals;
+
+    [ObservableProperty]
+    private bool _resizeEnabled;
+
+    partial void OnResizeEnabledChanged(bool value)
+    {
+        if (Stage == WorkflowStage.PlanReady)
+        {
+            _ = ReplanAsync();
+        }
+    }
+
+    [ObservableProperty]
+    private int _resizeMaxDimensionPixels = 2048;
+
+    partial void OnResizeMaxDimensionPixelsChanged(int value)
+    {
+        if (Stage == WorkflowStage.PlanReady)
+        {
+            _ = ReplanAsync();
+        }
+    }
+
+    [ObservableProperty]
+    private bool _isAdvancedPanelExpanded;
+
+    partial void OnIsAdvancedPanelExpandedChanged(bool value) =>
+        OnPropertyChanged(nameof(AdvancedPanelToggleLabel));
+
+    public string AdvancedPanelToggleLabel => IsAdvancedPanelExpanded
+        ? "Advanced options  ▾"
+        : "Advanced options  ▸";
+
+    /// <summary>Snapshot of the advanced panel's current values, saved on
+    /// exit via <see cref="ISettingsStore"/>.</summary>
+    public AppSettings ExportSettings() => new()
+    {
+        Preset = SelectedPreset.Id,
+        TargetFormat = SelectedTargetFormatOption.Id,
+        MetadataPolicy = StripMetadata ? MetadataPolicy.Strip : MetadataPolicy.Preserve,
+        OutputPolicy = OverwriteOriginals ? OutputPolicy.OverwriteOriginals : OutputPolicy.SeparateFolder,
+        ResizeEnabled = ResizeEnabled,
+        ResizeMaxDimensionPixels = ResizeMaxDimensionPixels,
+    };
+
+    private static List<FormatOption> BuildAvailableTargetFormats() =>
+        new[] { new FormatOption("Keep original format", null) }
+            .Concat(FormatRegistry.EncodableFormats.Select(f => new FormatOption(f.DisplayName, f.Id)))
+            .ToList();
 
     public string SupportedInputSummary { get; }
 
@@ -329,6 +435,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void ToggleAdvancedPanel() => IsAdvancedPanelExpanded = !IsAdvancedPanelExpanded;
+
+    [RelayCommand]
     private void StartOver()
     {
         _inputPaths = [];
@@ -353,6 +462,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 InputPaths = _inputPaths,
                 OutputDirectory = OutputDirectory,
                 Preset = SelectedPreset.Id,
+                TargetFormat = SelectedTargetFormatOption.Id,
+                MetadataPolicy = StripMetadata ? MetadataPolicy.Strip : MetadataPolicy.Preserve,
+                OutputPolicy = OverwriteOriginals ? OutputPolicy.OverwriteOriginals : OutputPolicy.SeparateFolder,
+                ResizeEnabled = ResizeEnabled,
+                ResizeMaxDimensionPixels = ResizeMaxDimensionPixels,
             };
 
             CurrentPlan = await Task.Run(() => _planner.CreatePlan(request));
