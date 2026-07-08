@@ -19,8 +19,10 @@ one is active right now and what's next inside it.
 | M5 | Wire executor into plan preview | Done | Optimize button goes live: progress, cancel, completion summary, calm error list. |
 | M6 | UI redesign | Done | Design system (palette, typography, cards, button hierarchy), all five states restyled, drag-over feedback. Lossless-only scope reaffirmed; no functional changes. |
 | M7 | Premium UI | Done | Light/dark theming (theme dictionaries + `DynamicResource`), header + status bar structure, file table in the plan preview, empty-state copy, micro-transitions. Deferred: live per-file queue statuses (needs engine per-item events), vector logo (packaging milestone). |
-| M8 | Settings persistence + advanced panel | Done | Advanced panel in the plan preview: format override, resize to a max dimension (pixel-count cap, never upscales — independent of the lossless preset system, ADR-0005), strip metadata, overwrite originals. All of it plus the preset persists as JSON in the OS app-data folder, loaded at startup, saved at shutdown. Size estimate deliberately ignores resize savings (no pixel work at plan time); the preview captions this. |
-| M9 | Packaging | Not started | Self-contained publish for win-x64 / osx-arm64 / osx-x64, icon, final polish. |
+| M8 | Settings persistence + advanced panel | Done | Advanced panel in the plan preview: format override, resize to a max dimension (pixel-count cap, never upscales — independent of the quality system, ADR-0005), strip metadata, overwrite originals. All of it plus the quality choice persists as JSON in the OS app-data folder, loaded at startup, saved at shutdown. Size estimate deliberately ignores resize savings (no pixel work at plan time); the preview captions this. |
+| M9 | Lossy quality control | In progress | Reverses ADR-0003 (see ADR-0006). `Quality` (1–100) becomes the single lossy dial through `JobRequest`/`CodecRequest`/`SizeEstimator`/codec; the three fixed presets are deleted. A live slider with labelled snap points replaces the preset cards; batch estimate + % + bytes-saved update in real time as it moves (heuristic, no pixel work). |
+| M10 | Compression studio UI | Not started | Two-pane premium redesign: large preview area (side-by-side original\|output, zoom), controls rail (quality, format, resize, metadata, output; space reserved for a future lossy-codec section), and a compression-statistics strip. Real per-image output size + dimensions via a live preview encode behind a new `IPreviewEncoder` seam (ADR-0006 §4). |
+| M11 | Packaging | Not started | Self-contained publish for win-x64 / osx-arm64 / osx-x64, icon, final polish. |
 
 ## Shape
 
@@ -55,6 +57,33 @@ Two-phase pipeline:
   are never touched until the replacement is verified. Failures never stop
   the batch; they are collected into the end-of-run summary. Cancellation
   is honored between files.
+
+## Quality and live feedback (M9/M10, ADR-0006)
+
+`Quality` (1–100) is the single lossy dial. It travels `JobRequest` →
+`CodecRequest` → `MagickImageCodec` (applied to lossy targets only) and
+into `SizeEstimator`. There is no preset model — a slider with labelled
+snap points is pure UI.
+
+Three distinct size concerns, deliberately kept separate:
+
+- **Plan-time batch estimate** (`SizeEstimator`): coarse, conservative
+  heuristic over `Quality`; no pixel work; drives the whole-job
+  "12.4 MB → 3.1 MB (75% smaller)" readout, live as the slider moves.
+- **Live per-image preview** (M10, `IPreviewEncoder`): actually encodes
+  one selected image at the chosen quality to an in-memory buffer for
+  the exact output size, exact output dimensions, and the side-by-side
+  preview. A read-only third concern — neither planning nor execution —
+  debounced from the view model.
+- **Post-run truth** (`ExecutionSummary`): the real bytes written.
+
+The batch estimate and the preview encode can disagree for one image;
+that is intended. The UI never conflates them.
+
+Studio layout (M10 target): a two-pane window — preview area (left) +
+controls rail (right) + a compression-statistics strip — sized so a
+future lossy-codec settings section drops into the rail without a
+re-layout.
 
 ## Format capabilities
 

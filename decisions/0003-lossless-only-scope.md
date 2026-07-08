@@ -1,6 +1,11 @@
 # ADR-0003: Lossless-only scope
 
-Status: Accepted
+Status: Superseded by ADR-0006 (2026-07-09).
+
+> This decision no longer holds. PixelPress now ships a user-facing
+> quality slider; see `decisions/0006-lossy-quality-and-live-feedback.md`.
+> The Context/Decision/Consequences below are preserved unedited as the
+> historical record of why lossless-only stood while it did.
 
 ## Context
 
