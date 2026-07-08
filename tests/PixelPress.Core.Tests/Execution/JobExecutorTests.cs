@@ -179,6 +179,27 @@ public sealed class JobExecutorTests
     }
 
     [Fact]
+    public async Task Codec_receives_the_resize_settings_from_the_request()
+    {
+        var fs = new FakeFileSystem().AddFile("/pics/a.jpg", 1_000);
+        var (plan, _) = PlanFrom(fs, Request("/pics"));
+        var codec = new FakeImageCodec(fs);
+        var executor = new JobExecutor(fs, codec);
+
+        var request = Request("/pics") with
+        {
+            ResizeEnabled = true,
+            ResizeMaxDimensionPixels = 1024,
+        };
+
+        await executor.ExecuteAsync(plan, request);
+
+        var received = Assert.Single(codec.Requests);
+        Assert.True(received.ResizeEnabled);
+        Assert.Equal(1024, received.ResizeMaxDimensionPixels);
+    }
+
+    [Fact]
     public async Task Results_are_ordered_deterministically_by_source_path()
     {
         var fs = new FakeFileSystem();

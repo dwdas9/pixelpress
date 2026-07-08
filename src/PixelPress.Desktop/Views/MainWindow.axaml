@@ -143,7 +143,7 @@
             </StackPanel>
 
             <!-- State 3: plan preview -->
-            <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding HasPlan}">
+            <Grid RowDefinitions="Auto,Auto,*,Auto" IsVisible="{Binding HasPlan}">
 
                 <Border Grid.Row="0" Classes="card" Padding="28,22" Margin="0,0,0,14">
                     <Grid ColumnDefinitions="*,Auto">
@@ -163,11 +163,70 @@
                         <Button Grid.Column="1" Classes="subtle"
                                 Content="Change output folder…"
                                 Click="OnChangeOutputFolderClick"
+                                IsVisible="{Binding ShowOutputFolderControl}"
                                 VerticalAlignment="Top" />
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="1" Classes="card" Padding="16">
+                <!-- Advanced options -->
+                <Border Grid.Row="1" Classes="card" Padding="16" Margin="0,0,0,14">
+                    <StackPanel Spacing="14">
+                        <Button Classes="ghost" Padding="4"
+                                Content="{Binding AdvancedPanelToggleLabel}"
+                                Command="{Binding ToggleAdvancedPanelCommand}"
+                                HorizontalAlignment="Left" />
+
+                        <StackPanel Spacing="16" IsVisible="{Binding IsAdvancedPanelExpanded}">
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Classes="caption" FontWeight="SemiBold" Text="CONVERT TO" />
+                                <ListBox Classes="presets"
+                                         ItemsSource="{Binding AvailableTargetFormats}"
+                                         SelectedItem="{Binding SelectedTargetFormatOption}">
+                                    <ListBox.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ListBox.ItemsPanel>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Classes="presetCard" Padding="12,8">
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="13" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+
+                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
+
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <CheckBox Content="Resize large images to fit within"
+                                          IsChecked="{Binding ResizeEnabled}" />
+                                <NumericUpDown Value="{Binding ResizeMaxDimensionPixels}"
+                                               Minimum="1" Maximum="20000" Increment="64"
+                                               FormatString="0" Width="130"
+                                               IsEnabled="{Binding ResizeEnabled}" />
+                                <TextBlock Classes="body secondary" Text="px" VerticalAlignment="Center" />
+                            </StackPanel>
+
+                            <CheckBox Content="Remove EXIF, location and camera data from output files"
+                                      IsChecked="{Binding StripMetadata}" />
+
+                            <StackPanel Spacing="2">
+                                <CheckBox Content="Overwrite original files instead of writing to a new folder"
+                                          IsChecked="{Binding OverwriteOriginals}" />
+                                <TextBlock Classes="caption" Margin="26,0,0,0"
+                                           Foreground="{DynamicResource DangerBrush}"
+                                           Text="Replaces original files — cannot be undone."
+                                           IsVisible="{Binding OverwriteOriginals}" />
+                            </StackPanel>
+
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2" Classes="card" Padding="16">
                     <Grid RowDefinitions="Auto,*,Auto">
                         <Grid Grid.Row="0" ColumnDefinitions="*,140,90" Margin="12,4,12,8">
                             <TextBlock Grid.Column="0" Classes="caption" Text="NAME" FontWeight="SemiBold" />
@@ -219,7 +278,7 @@
                     </Grid>
                 </Border>
 
-                <StackPanel Grid.Row="2" Margin="0,16,0,0" Spacing="8">
+                <StackPanel Grid.Row="3" Margin="0,16,0,0" Spacing="8">
                     <Button Classes="primary"
                             Content="{Binding OptimizeButtonLabel}"
                             Command="{Binding OptimizeCommand}"

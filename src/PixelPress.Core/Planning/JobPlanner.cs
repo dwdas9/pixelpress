@@ -50,6 +50,13 @@ public sealed class JobPlanner(IFileSystem fileSystem)
             throw new ArgumentException(
                 $"{target} cannot be used as an output format.", nameof(request));
         }
+
+        if (request.ResizeEnabled && request.ResizeMaxDimensionPixels <= 0)
+        {
+            throw new ArgumentException(
+                "ResizeMaxDimensionPixels must be greater than zero when resize is enabled.",
+                nameof(request));
+        }
     }
 
     /// <summary>

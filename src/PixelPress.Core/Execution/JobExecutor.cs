@@ -71,7 +71,9 @@ public sealed class JobExecutor
 
             Parallel.ForEach(plan.Items, options, item =>
             {
-                var result = ProcessItem(item, request.MetadataPolicy, preset);
+                var result = ProcessItem(
+                    item, request.MetadataPolicy, preset,
+                    request.ResizeEnabled, request.ResizeMaxDimensionPixels);
                 results.Add(result);
 
                 var done = Interlocked.Increment(ref completed);
@@ -99,7 +101,11 @@ public sealed class JobExecutor
     }
 
     private ItemResult ProcessItem(
-        PlannedItem item, MetadataPolicy metadataPolicy, OptimizationPreset preset)
+        PlannedItem item,
+        MetadataPolicy metadataPolicy,
+        OptimizationPreset preset,
+        bool resizeEnabled,
+        int resizeMaxDimensionPixels)
     {
         var tempPath = _fileSystem.GetTempFilePath(item.OutputPath);
 
@@ -118,6 +124,8 @@ public sealed class JobExecutor
                 OutputFormat = item.OutputFormat,
                 Preset = preset,
                 MetadataPolicy = metadataPolicy,
+                ResizeEnabled = resizeEnabled,
+                ResizeMaxDimensionPixels = resizeMaxDimensionPixels,
             });
 
             if (!codecResult.Success)
