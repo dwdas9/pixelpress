@@ -159,6 +159,9 @@
                                            Text="{Binding EstimatedSavingsSummary}" />
                                 <TextBlock Classes="caption" Text="(estimated)" VerticalAlignment="Center" />
                             </StackPanel>
+                            <TextBlock Classes="caption"
+                                       Text="Resize is on — actual savings may exceed this estimate."
+                                       IsVisible="{Binding ResizeEnabled}" />
                         </StackPanel>
                         <Button Grid.Column="1" Classes="subtle"
                                 Content="Change output folder…"

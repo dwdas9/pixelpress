@@ -19,7 +19,7 @@ one is active right now and what's next inside it.
 | M5 | Wire executor into plan preview | Done | Optimize button goes live: progress, cancel, completion summary, calm error list. |
 | M6 | UI redesign | Done | Design system (palette, typography, cards, button hierarchy), all five states restyled, drag-over feedback. Lossless-only scope reaffirmed; no functional changes. |
 | M7 | Premium UI | Done | Light/dark theming (theme dictionaries + `DynamicResource`), header + status bar structure, file table in the plan preview, empty-state copy, micro-transitions. Deferred: live per-file queue statuses (needs engine per-item events), vector logo (packaging milestone). |
-| M8 | Settings persistence + advanced panel | Not started | Format override, resize, strip metadata, overwrite originals. |
+| M8 | Settings persistence + advanced panel | Done | Advanced panel in the plan preview: format override, resize to a max dimension (pixel-count cap, never upscales — independent of the lossless preset system, ADR-0005), strip metadata, overwrite originals. All of it plus the preset persists as JSON in the OS app-data folder, loaded at startup, saved at shutdown. Size estimate deliberately ignores resize savings (no pixel work at plan time); the preview captions this. |
 | M9 | Packaging | Not started | Self-contained publish for win-x64 / osx-arm64 / osx-x64, icon, final polish. |
 
 ## Shape
@@ -27,7 +27,7 @@ one is active right now and what's next inside it.
 Single-process desktop app. Two assemblies plus tests:
 
 - **PixelPress.Core** — the engine. Formats, presets, job contracts,
-  planner, executor. No UI references, ever. Magick.NET lives inside
+  planner, executor, settings store. No UI references, ever. Magick.NET lives inside
   `Processing/` behind an internal codec interface; no ImageMagick type
   appears in the public API.
 - **PixelPress.Desktop** — Avalonia UI, MVVM (CommunityToolkit.Mvvm),
