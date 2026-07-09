@@ -28,8 +28,9 @@ one is active right now and what's next inside it.
 
 Single-process desktop app. Two assemblies plus tests:
 
-- **PixelPress.Core** — the engine. Formats, presets, job contracts,
-  planner, executor, settings store. No UI references, ever. Magick.NET lives inside
+- **PixelPress.Core** — the engine. Formats, job contracts, quality
+  model, planner, executor, preview encoder, settings store. No UI
+  references, ever. Magick.NET lives inside
   `Processing/` behind an internal codec interface; no ImageMagick type
   appears in the public API.
 - **PixelPress.Desktop** — Avalonia UI, MVVM (CommunityToolkit.Mvvm),
@@ -101,7 +102,7 @@ of exhausting RAM.
 
 ## M4 notes
 
-- PNG compression-level tuning (per-preset) is deferred — Magick.NET's
+- PNG compression-level tuning is deferred — Magick.NET's
   define-based API for it needs on-machine confirmation before relying
   on a guessed signature. Default PNG compression is used for now.
 - `MagickImageCodec` and `CodecVerifier.cs` are the only files in the
