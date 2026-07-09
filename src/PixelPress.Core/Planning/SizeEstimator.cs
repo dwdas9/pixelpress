@@ -1,5 +1,4 @@
 using PixelPress.Core.Formats;
-using PixelPress.Core.Presets;
 
 namespace PixelPress.Core.Planning;
 
@@ -16,9 +15,9 @@ internal static class SizeEstimator
         long sourceBytes,
         ImageFormat source,
         ImageFormat output,
-        PresetId preset)
+        int quality)
     {
-        var ratio = BaseRatio(source, output) * PresetFactor(preset, output);
+        var ratio = BaseRatio(source, output) * QualityFactor(quality, output);
         return Math.Max(1, (long)(sourceBytes * ratio));
     }
 
@@ -59,20 +58,23 @@ internal static class SizeEstimator
         return 0.65;
     }
 
-    private static double PresetFactor(PresetId preset, ImageFormat output)
+    /// <summary>
+    /// Maps the 1–100 quality dial to a multiplier on the base ratio, for
+    /// formats that actually have a quality knob. A deliberately simple,
+    /// monotonic linear curve calibrated so quality 80 (the default)
+    /// leaves the base ratio unchanged, higher quality inflates the
+    /// estimate, and lower quality shrinks it. Coarse by design — the
+    /// exact number comes from the live preview encode, not here.
+    /// </summary>
+    private static double QualityFactor(int quality, ImageFormat output)
     {
-        // Lossless outputs have no quality dial; preset barely matters.
-        if (output.IsLossless)
+        // Lossless/palette outputs have no quality dial; quality is a no-op.
+        if (!output.HasQualityDial)
         {
             return 1.0;
         }
 
-        return preset switch
-        {
-            PresetId.HighQuality => 1.25,
-            PresetId.Balanced => 1.0,
-            PresetId.SmallestSize => 0.70,
-            _ => 1.0,
-        };
+        // 0.20 + 0.010·q → 1.00 at q=80, ~1.20 at q=100, ~0.21 at q=1.
+        return 0.20 + 0.010 * Math.Clamp(quality, 1, 100);
     }
 }

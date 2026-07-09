@@ -1,6 +1,5 @@
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
-using PixelPress.Core.Presets;
 
 namespace PixelPress.Core.Processing;
 
@@ -34,7 +33,9 @@ internal sealed record CodecRequest
 
     public required ImageFormatId OutputFormat { get; init; }
 
-    public required OptimizationPreset Preset { get; init; }
+    /// <summary>Lossy quality, 1–100 (see ADR-0006). Applied only to
+    /// formats whose <see cref="ImageFormat.HasQualityDial"/> is true.</summary>
+    public required int Quality { get; init; }
 
     public required MetadataPolicy MetadataPolicy { get; init; }
 

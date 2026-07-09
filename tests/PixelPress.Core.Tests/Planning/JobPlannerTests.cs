@@ -206,6 +206,28 @@ public sealed class JobPlannerTests
         Assert.Throws<ArgumentException>(() => planner.CreatePlan(request));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(101)]
+    public void Quality_outside_one_to_hundred_is_rejected(int quality)
+    {
+        var planner = new JobPlanner(new FakeFileSystem().AddFile("/a.jpg"));
+        var request = Request("/a.jpg") with { Quality = quality };
+
+        Assert.Throws<ArgumentException>(() => planner.CreatePlan(request));
+    }
+
+    [Fact]
+    public void Higher_quality_yields_a_larger_estimated_total()
+    {
+        var fs = new FakeFileSystem().AddFile("/pics/a.jpg", 1_000_000);
+
+        var low = new JobPlanner(fs).CreatePlan(Request("/pics/a.jpg") with { Quality = 30 });
+        var high = new JobPlanner(fs).CreatePlan(Request("/pics/a.jpg") with { Quality = 95 });
+
+        Assert.True(high.TotalEstimatedOutputBytes > low.TotalEstimatedOutputBytes);
+    }
+
     [Fact]
     public void Plan_totals_aggregate_correctly()
     {

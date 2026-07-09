@@ -1,6 +1,5 @@
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
-using PixelPress.Core.Presets;
 
 namespace PixelPress.Core.Settings;
 
@@ -11,7 +10,8 @@ namespace PixelPress.Core.Settings;
 /// </summary>
 public sealed record AppSettings
 {
-    public PresetId Preset { get; init; } = PresetId.Balanced;
+    /// <summary>Lossy quality dial, 1–100 (see ADR-0006). Default 80.</summary>
+    public int Quality { get; init; } = 80;
 
     /// <summary>Format to convert to, or null to keep each file's own
     /// format. Mirrors <see cref="JobRequest.TargetFormat"/>.</summary>

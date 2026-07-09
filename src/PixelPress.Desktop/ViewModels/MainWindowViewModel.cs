@@ -4,7 +4,6 @@ using PixelPress.Core.Execution;
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
-using PixelPress.Core.Presets;
 using PixelPress.Core.Settings;
 
 namespace PixelPress.Desktop.ViewModels;
@@ -31,17 +30,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private IReadOnlyList<string> _inputPaths = [];
     private JobRequest? _currentRequest;
     private CancellationTokenSource? _runCts;
+    private CancellationTokenSource? _replanDebounceCts;
 
     public MainWindowViewModel(JobPlanner planner, JobExecutor executor, ISettingsStore settingsStore)
     {
         _planner = planner;
         _executor = executor;
-        AvailablePresets = Presets.All;
         AvailableTargetFormats = BuildAvailableTargetFormats();
         SupportedInputSummary = BuildSupportedInputSummary();
 
         var settings = settingsStore.Load();
-        _selectedPreset = Presets.Get(settings.Preset);
+        _quality = Math.Clamp(settings.Quality, 1, 100);
         _selectedTargetFormatOption = AvailableTargetFormats.FirstOrDefault(
             f => f.Id == settings.TargetFormat) ?? AvailableTargetFormats[0];
         _stripMetadata = settings.MetadataPolicy == MetadataPolicy.Strip;
@@ -50,20 +49,33 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _resizeMaxDimensionPixels = settings.ResizeMaxDimensionPixels;
     }
 
-    public IReadOnlyList<OptimizationPreset> AvailablePresets { get; }
+    // --- Quality ---------------------------------------------------------
 
+    /// <summary>The single lossy quality dial, 1–100 (see ADR-0006). The
+    /// slider binds here; moving it re-estimates the batch totals live.</summary>
     [ObservableProperty]
-    private OptimizationPreset _selectedPreset;
+    private int _quality;
 
-    /// <summary>Changing the preset only affects the size estimate, but a
-    /// re-plan is cheap and keeps the preview honest.</summary>
-    partial void OnSelectedPresetChanged(OptimizationPreset value)
+    partial void OnQualityChanged(int value)
     {
+        OnPropertyChanged(nameof(QualityLabel));
+        // The slider fires this rapidly while dragging; debounce so we
+        // re-plan once the user settles rather than on every tick.
         if (Stage == WorkflowStage.PlanReady)
         {
-            _ = ReplanAsync();
+            _ = DebouncedReplanAsync();
         }
     }
+
+    /// <summary>Plain-language name for the current quality band, shown
+    /// next to the slider. Pure UI — carries no engine state.</summary>
+    public string QualityLabel => Quality switch
+    {
+        <= 45 => "Smaller file",
+        <= 70 => "Balanced",
+        <= 90 => "High quality",
+        _ => "Near-original",
+    };
 
     // --- Advanced panel --------------------------------------------------
 
@@ -148,7 +160,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// exit via <see cref="ISettingsStore"/>.</summary>
     public AppSettings ExportSettings() => new()
     {
-        Preset = SelectedPreset.Id,
+        Quality = Quality,
         TargetFormat = SelectedTargetFormatOption.Id,
         MetadataPolicy = StripMetadata ? MetadataPolicy.Strip : MetadataPolicy.Preserve,
         OutputPolicy = OverwriteOriginals ? OutputPolicy.OverwriteOriginals : OutputPolicy.SeparateFolder,
@@ -450,9 +462,39 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         Stage = WorkflowStage.AwaitingInput;
     }
 
-    private async Task ReplanAsync()
+    /// <summary>Re-plans after a short quiet period, cancelling any
+    /// re-plan still pending from an earlier slider tick. Keeps the live
+    /// estimate responsive without re-scanning on every pixel of drag.
+    /// Unlike <see cref="ReplanAsync"/> it stays on the plan-ready screen
+    /// (no flash to the "reading files…" state) while settling.</summary>
+    private async Task DebouncedReplanAsync()
     {
-        Stage = WorkflowStage.Planning;
+        _replanDebounceCts?.Cancel();
+        _replanDebounceCts?.Dispose();
+        var cts = _replanDebounceCts = new CancellationTokenSource();
+
+        try
+        {
+            await Task.Delay(180, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (_inputPaths.Count > 0)
+        {
+            await ReplanAsync(showPlanningState: false);
+        }
+    }
+
+    private async Task ReplanAsync(bool showPlanningState = true)
+    {
+        if (showPlanningState)
+        {
+            Stage = WorkflowStage.Planning;
+        }
+
         StatusMessage = null;
 
         try
@@ -461,7 +503,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             {
                 InputPaths = _inputPaths,
                 OutputDirectory = OutputDirectory,
-                Preset = SelectedPreset.Id,
+                Quality = Quality,
                 TargetFormat = SelectedTargetFormatOption.Id,
                 MetadataPolicy = StripMetadata ? MetadataPolicy.Strip : MetadataPolicy.Preserve,
                 OutputPolicy = OverwriteOriginals ? OutputPolicy.OverwriteOriginals : OutputPolicy.SeparateFolder,
@@ -565,5 +607,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Disposes the in-flight cancellation token source, if any -
     /// covers the case where the app closes while a run is still active.
     /// Wired to the DI container's own disposal in App.axaml.cs.</summary>
-    public void Dispose() => _runCts?.Dispose();
+    public void Dispose()
+    {
+        _runCts?.Dispose();
+        _replanDebounceCts?.Dispose();
+    }
 }

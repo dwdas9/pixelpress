@@ -60,6 +60,14 @@ public sealed record ImageFormat
     /// </summary>
     public bool IsLossless { get; init; }
 
+    /// <summary>
+    /// The format has a lossy quality knob the <c>Quality</c> slider
+    /// drives (JPEG, WebP, AVIF, JPEG XL). The single source of truth for
+    /// "does the quality value apply to this output?" — see ADR-0006.
+    /// Lossless formats (PNG, BMP) and palette formats (GIF) are false.
+    /// </summary>
+    public bool HasQualityDial { get; init; }
+
     /// <summary>Canonical extension used for output files, without dot.</summary>
     public string CanonicalExtension => Extensions[0];
 }

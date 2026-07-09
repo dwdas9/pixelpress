@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
-using PixelPress.Core.Presets;
 using PixelPress.Core.Processing;
 using PixelPress.Core.Services;
 
@@ -55,7 +54,6 @@ public sealed class JobExecutor
         IProgress<ExecutionProgress>? progress,
         CancellationToken cancellationToken)
     {
-        var preset = PixelPress.Core.Presets.Presets.Get(request.Preset);
         var results = new ConcurrentBag<ItemResult>();
         var completed = 0;
         var total = plan.Items.Count;
@@ -72,7 +70,7 @@ public sealed class JobExecutor
             Parallel.ForEach(plan.Items, options, item =>
             {
                 var result = ProcessItem(
-                    item, request.MetadataPolicy, preset,
+                    item, request.MetadataPolicy, request.Quality,
                     request.ResizeEnabled, request.ResizeMaxDimensionPixels);
                 results.Add(result);
 
@@ -103,7 +101,7 @@ public sealed class JobExecutor
     private ItemResult ProcessItem(
         PlannedItem item,
         MetadataPolicy metadataPolicy,
-        OptimizationPreset preset,
+        int quality,
         bool resizeEnabled,
         int resizeMaxDimensionPixels)
     {
@@ -122,7 +120,7 @@ public sealed class JobExecutor
                 SourcePath = item.SourcePath,
                 DestinationPath = tempPath,
                 OutputFormat = item.OutputFormat,
-                Preset = preset,
+                Quality = quality,
                 MetadataPolicy = metadataPolicy,
                 ResizeEnabled = resizeEnabled,
                 ResizeMaxDimensionPixels = resizeMaxDimensionPixels,

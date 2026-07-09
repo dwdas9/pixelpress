@@ -24,6 +24,7 @@ public static class FormatRegistry
             CanDecode = true,
             CanEncode = true,
             SupportsTransparency = false,
+            HasQualityDial = true,
         },
         new ImageFormat
         {
@@ -44,6 +45,7 @@ public static class FormatRegistry
             CanEncode = true,
             SupportsAnimation = true,
             SupportsTransparency = true,
+            HasQualityDial = true,
         },
         new ImageFormat
         {
@@ -53,6 +55,7 @@ public static class FormatRegistry
             CanDecode = true,
             CanEncode = true,
             SupportsTransparency = true,
+            HasQualityDial = true,
         },
         new ImageFormat
         {
@@ -99,6 +102,7 @@ public static class FormatRegistry
             CanDecode = true,
             CanEncode = true,
             SupportsTransparency = true,
+            HasQualityDial = true,
         },
         new ImageFormat
         {

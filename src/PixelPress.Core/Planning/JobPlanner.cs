@@ -1,6 +1,5 @@
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
-using PixelPress.Core.Presets;
 using PixelPress.Core.Services;
 
 namespace PixelPress.Core.Planning;
@@ -56,6 +55,12 @@ public sealed class JobPlanner(IFileSystem fileSystem)
             throw new ArgumentException(
                 "ResizeMaxDimensionPixels must be greater than zero when resize is enabled.",
                 nameof(request));
+        }
+
+        if (request.Quality is < 1 or > 100)
+        {
+            throw new ArgumentException(
+                "Quality must be between 1 and 100.", nameof(request));
         }
     }
 
@@ -134,7 +139,7 @@ public sealed class JobPlanner(IFileSystem fileSystem)
                 OutputFormat = outputFormat.Id,
                 SourceBytes = sourceBytes,
                 EstimatedOutputBytes = SizeEstimator.Estimate(
-                    sourceBytes, sourceFormat, outputFormat, request.Preset),
+                    sourceBytes, sourceFormat, outputFormat, request.Quality),
                 FormatFallbackApplied = fallback,
                 RenamedToAvoidConflict = renamed,
             });
