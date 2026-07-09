@@ -1,7 +1,6 @@
 using PixelPress.Core.Execution;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
-using PixelPress.Core.Presets;
 using PixelPress.Core.Processing;
 using PixelPress.Core.Tests.Planning;
 using PixelPress.Core.Tests.Processing;
@@ -158,7 +157,7 @@ public sealed class JobExecutorTests
     }
 
     [Fact]
-    public async Task Codec_receives_the_preset_and_metadata_policy_from_the_request()
+    public async Task Codec_receives_the_quality_and_metadata_policy_from_the_request()
     {
         var fs = new FakeFileSystem().AddFile("/pics/a.jpg", 1_000);
         var (plan, _) = PlanFrom(fs, Request("/pics"));
@@ -167,14 +166,14 @@ public sealed class JobExecutorTests
 
         var request = Request("/pics") with
         {
-            Preset = PresetId.SmallestSize,
+            Quality = 42,
             MetadataPolicy = MetadataPolicy.Strip,
         };
 
         await executor.ExecuteAsync(plan, request);
 
         var received = Assert.Single(codec.Requests);
-        Assert.Equal(Presets.Presets.SmallestSize, received.Preset);
+        Assert.Equal(42, received.Quality);
         Assert.Equal(MetadataPolicy.Strip, received.MetadataPolicy);
     }
 

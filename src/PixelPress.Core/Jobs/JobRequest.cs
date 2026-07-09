@@ -1,5 +1,4 @@
 using PixelPress.Core.Formats;
-using PixelPress.Core.Presets;
 
 namespace PixelPress.Core.Jobs;
 
@@ -45,7 +44,10 @@ public sealed record JobRequest
     /// format (pure optimization). Must be an encodable format.</summary>
     public ImageFormatId? TargetFormat { get; init; }
 
-    public PresetId Preset { get; init; } = PresetId.Balanced;
+    /// <summary>The single lossy quality dial, 1–100 (see ADR-0006).
+    /// Applied to lossy output formats (JPEG/WebP/AVIF/JPEG XL); ignored
+    /// by lossless outputs. Default 80 is the everyday "balanced" point.</summary>
+    public int Quality { get; init; } = 80;
 
     public MetadataPolicy MetadataPolicy { get; init; } = MetadataPolicy.Preserve;
 

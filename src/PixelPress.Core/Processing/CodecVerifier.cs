@@ -46,7 +46,7 @@ public static class CodecVerifier
                     SourcePath = sourcePath,
                     DestinationPath = destinationPath,
                     OutputFormat = format.Id,
-                    Preset = Presets.Presets.Balanced,
+                    Quality = 80,
                     MetadataPolicy = MetadataPolicy.Preserve,
                 };
 

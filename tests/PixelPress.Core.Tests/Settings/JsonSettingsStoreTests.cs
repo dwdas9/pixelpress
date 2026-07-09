@@ -1,6 +1,5 @@
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
-using PixelPress.Core.Presets;
 using PixelPress.Core.Settings;
 using Xunit;
 
@@ -29,7 +28,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
         var store = new JsonSettingsStore(FilePath);
         var saved = new AppSettings
         {
-            Preset = PresetId.SmallestSize,
+            Quality = 42,
             TargetFormat = ImageFormatId.WebP,
             MetadataPolicy = MetadataPolicy.Strip,
             OutputPolicy = OutputPolicy.OverwriteOriginals,

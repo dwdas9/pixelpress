@@ -1,7 +1,6 @@
 using ImageMagick;
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
-using PixelPress.Core.Presets;
 
 namespace PixelPress.Core.Processing;
 
@@ -46,7 +45,7 @@ internal sealed class MagickImageCodec : IImageCodec
 
         ApplyMetadataPolicy(image, request.MetadataPolicy);
         ApplyResize(image, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
-        ApplyQuality(image, request.OutputFormat, request.Preset);
+        ApplyQuality(image, request.OutputFormat, request.Quality);
         image.Format = ToMagickFormat(request.OutputFormat);
         image.Write(request.DestinationPath);
 
@@ -68,7 +67,7 @@ internal sealed class MagickImageCodec : IImageCodec
             using var firstFrame = (MagickImage)collection[0].Clone();
             ApplyMetadataPolicy(firstFrame, request.MetadataPolicy);
             ApplyResize(firstFrame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
-            ApplyQuality(firstFrame, request.OutputFormat, request.Preset);
+            ApplyQuality(firstFrame, request.OutputFormat, request.Quality);
             firstFrame.Format = ToMagickFormat(request.OutputFormat);
             firstFrame.Write(request.DestinationPath);
             return Success(request.DestinationPath);
@@ -82,7 +81,7 @@ internal sealed class MagickImageCodec : IImageCodec
         {
             ApplyMetadataPolicy(frame, request.MetadataPolicy);
             ApplyResize(frame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
-            ApplyQuality(frame, request.OutputFormat, request.Preset);
+            ApplyQuality(frame, request.OutputFormat, request.Quality);
             frame.Format = ToMagickFormat(request.OutputFormat);
         }
 
@@ -114,14 +113,13 @@ internal sealed class MagickImageCodec : IImageCodec
         image.Resize(new MagickGeometry((uint)maxDimension, (uint)maxDimension) { Less = true });
     }
 
-    private static void ApplyQuality(
-        IMagickImage<byte> image, ImageFormatId format, OptimizationPreset preset)
+    private static void ApplyQuality(IMagickImage<byte> image, ImageFormatId format, int quality)
     {
-        if (preset.QualityFor(format) is { } quality)
+        if (FormatRegistry.Get(format).HasQualityDial)
         {
             image.Quality = (uint)quality;
         }
-        // Lossless formats (PNG, BMP, GIF) have no quality dial;
+        // Lossless formats (PNG, BMP) and GIF have no lossy quality dial;
         // PNG compression-level tuning is a deferred follow-up — see
         // ARCHITECTURE.md M4 notes. Default compression is used for now.
     }
