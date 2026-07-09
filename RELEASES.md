@@ -31,5 +31,19 @@ launch. The size estimate intentionally ignores resize savings —
 planning never opens pixels — and the preview captions that actual
 savings may exceed it.
 
-From M9 onward, each milestone close-out adds its own dated entry
+## M9 (2026-07-09, `35a65b7` + `32e0e12`)
+
+Lossy quality control — the reversal of ADR-0003 (recorded as ADR-0006).
+A single `Quality` dial (1–100) replaces the three fixed presets and
+travels the whole engine: `JobRequest` → `CodecRequest` →
+`MagickImageCodec` (applied only to formats flagged
+`ImageFormat.HasQualityDial` — JPEG/WebP/AVIF/JPEG XL) and into a new
+quality-aware `SizeEstimator` curve. The preset model
+(`PresetId`/`OptimizationPreset`/`Presets`) is deleted. In the UI a
+quality slider takes the preset cards' place on the drop screen and adds
+a second slider to the plan-preview header; moving it re-estimates the
+whole-job size/%/bytes-saved live (debounced so a drag re-plans once it
+settles). Settings persist `Quality` instead of the preset.
+
+From M10 onward, each milestone close-out adds its own dated entry
 here, anchored to the commit(s) that shipped it.
