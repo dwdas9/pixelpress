@@ -2,23 +2,24 @@
 
 Class C — overwritten in full at every checkpoint. Not a narrative.
 
-Last updated: 2026-07-09 (M9 kickoff checkpoint)
+Last updated: 2026-07-09 (M9 close-out / M10 kickoff checkpoint)
 
 ## Current Milestone
 
-M9 — Lossy quality control (in progress).
+M10 — Compression studio UI (not started).
 
 ## Last Completed Action
 
-Recorded the scope reversal the product owner requested: replace fixed
-presets with a quality slider, show real-time size feedback, redesign
-the UI as a premium two-pane "compression studio," and reserve room for
-a future lossy-codec mode. Wrote ADR-0006 (supersedes ADR-0003, whose
-status line now points to it), split the work into M9 (engine + slider +
-live batch feedback) and M10 (studio UI redesign + live per-image
-preview) and pushed Packaging to M11 in the ARCHITECTURE milestone
-table, and added the "Quality and live feedback" section to
-ARCHITECTURE. No code changed in this checkpoint commit.
+Closed out M9 (lossy quality control). Shipped in commits `35a65b7`
+(ADR-0006 + doc restructure) and `32e0e12` (implementation): `Quality`
+(1–100) is now the single lossy dial through the whole engine, applied
+only to formats flagged `ImageFormat.HasQualityDial`
+(JPEG/WebP/AVIF/JPEG XL); the fixed-preset model is deleted; the
+`SizeEstimator` is quality-aware; a live quality slider replaced the
+preset cards on the drop screen and in the plan-preview header, with a
+debounced re-plan so batch totals (size/%/bytes-saved) update as it
+moves. Build clean, 55 tests pass, app smoke-launched without XAML
+errors. Marked the M9 row Done and added the M9 RELEASES entry.
 
 ## Current Blockers
 
@@ -26,39 +27,38 @@ None.
 
 ## Next Immediate Task
 
-Implement the M9 engine slice, then commit it green:
-1. Add `int Quality { get; init; } = 80;` to `JobRequest` and
-   `CodecRequest`; remove `Preset`/`OptimizationPreset` from both.
-2. `MagickImageCodec.ApplyQuality` applies `Quality` to lossy formats
-   (JPEG/WebP/AVIF/JPEG XL) only; PNG/BMP unchanged.
-3. Replace `SizeEstimator.PresetFactor` with a continuous
-   `QualityFactor(quality, output)` curve; `JobPlanner` passes
-   `request.Quality`; validate 1–100.
-4. `JobExecutor`: drop `Presets.Get`, pass `request.Quality` through.
-5. Delete `Presets.cs` (`PresetId`, `OptimizationPreset`, `Presets`).
-6. UI: replace the three preset cards with a quality slider bound to a
-   `Quality` VM property (debounced re-plan so batch totals update live);
-   `AppSettings` persists `Quality` instead of `Preset`.
-7. Update Core tests that reference presets (JobExecutorTests
-   "Codec_receives_the_preset...", any FakeImageCodec preset use) to
-   assert on `Quality`. `dotnet test` must be green before commit.
+Start M10 — the premium two-pane "compression studio" redesign
+(ADR-0006 §4–§5). This is the second half of the product owner's
+request. Build order suggestion:
 
-Then M10 (studio UI + `IPreviewEncoder`) is the following milestone —
-do NOT start it until M9 is committed.
+1. **`IPreviewEncoder` seam in Core** (ADR-0006 §4): encode ONE image at
+   a given quality/format/resize to an in-memory buffer, returning exact
+   output bytes + output dimensions (and source dimensions). Read-only;
+   neither planning nor execution. Add Core tests with a fake.
+2. **Studio layout** in `MainWindow.axaml`: two-pane workspace — preview
+   area (left; side-by-side original|output with a zoom control) +
+   controls rail (right; quality slider, format, resize, metadata,
+   output — with clearly reserved space for a future lossy-codec
+   section) + a compression-statistics strip (orig→output, %, saved,
+   dimension change). Reserve room so future lossy controls drop in
+   without re-layout.
+3. **View-model**: a "selected image" for the studio preview, driving a
+   debounced `IPreviewEncoder` call; expose real output size, real
+   dimensions, and the preview bitmaps. Show "12.4 MB → 3.1 MB
+   (75% smaller)" style stats that update on every setting change.
+
+Verification caveat: M10 is GUI-heavy and hard to verify headlessly —
+smoke-launch after each slice (as done in M9) and commit green
+increments frequently given the token-budget risk the user flagged.
 
 ## Context Dependency Index
 
 - decisions/0006-lossy-quality-and-live-feedback.md
 - docs/ARCHITECTURE.md
-- src/PixelPress.Core/Jobs/JobRequest.cs
-- src/PixelPress.Core/Presets/Presets.cs
-- src/PixelPress.Core/Planning/SizeEstimator.cs
-- src/PixelPress.Core/Planning/JobPlanner.cs
 - src/PixelPress.Core/Processing/IImageCodec.cs
 - src/PixelPress.Core/Processing/MagickImageCodec.cs
-- src/PixelPress.Core/Execution/JobExecutor.cs
-- src/PixelPress.Core/Settings/AppSettings.cs
+- src/PixelPress.Core/Formats/ImageFormat.cs
 - src/PixelPress.Desktop/ViewModels/MainWindowViewModel.cs
 - src/PixelPress.Desktop/Views/MainWindow.axaml
-- tests/PixelPress.Core.Tests/Execution/JobExecutorTests.cs
-- tests/PixelPress.Core.Tests/Planning/JobPlannerTests.cs
+- src/PixelPress.Desktop/Views/MainWindow.axaml.cs
+- src/PixelPress.Desktop/Styles/AppStyles.axaml
