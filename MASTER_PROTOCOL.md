@@ -28,8 +28,11 @@ shares memory with the other — only the repository does.
   capability. The UI's output picker is generated from
   `FormatRegistry.EncodableFormats` — it must never be able to offer a
   conversion the engine can't perform.
-- **Lossless-only scope** is a deliberate, reaffirmed boundary (see
-  ADR-0003). Don't add lossy-quality knobs without a new ADR.
+- **Lossy quality is a first-class, user-facing dimension** as of
+  ADR-0006 (which superseded the earlier lossless-only boundary,
+  ADR-0003). `Quality` (1–100) is the single lossy dial; changing that
+  model, or the plan/preview/estimate contract around it, warrants a new
+  ADR rather than an ad-hoc tweak.
 - **Atomic writes only.** The executor writes to a temp file and
   renames on success; originals are never touched until the
   replacement is verified.
@@ -61,7 +64,7 @@ this file.
 ## 5. Standing rules
 
 - Reuse before creating: check `docs/ARCHITECTURE.md` and
-  `FormatRegistry`/`Presets` before adding a new type or format path.
+  `FormatRegistry` before adding a new type or format path.
 - Every engine change in `PixelPress.Core` needs a corresponding xunit
   test in `tests/PixelPress.Core.Tests`; UI-only changes don't.
 - A genuinely irreversible decision (dependency swap, scope boundary,

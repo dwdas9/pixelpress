@@ -1,7 +1,7 @@
 # PixelPress
 
 Offline image optimizer and format converter for Windows and macOS.
-Drop images or folders, pick a quality preset, done.
+Drop images or folders, set the quality, done.
 
 Author: D Das
 
@@ -35,7 +35,7 @@ convert HEIC to AVIF or JPEG instead.
 
 ## Layout
 
-    src/PixelPress.Core       engine: formats, presets, planning, processing (no UI)
+    src/PixelPress.Core       engine: formats, quality model, planning, processing (no UI)
     src/PixelPress.Desktop    Avalonia UI (MVVM)
     tests/                    engine tests (xunit)
     docs/                     architecture (living map + milestone table)
