@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using PixelPress.Core.Execution;
 using PixelPress.Core.Planning;
+using PixelPress.Core.Processing;
 using PixelPress.Core.Services;
 using PixelPress.Core.Settings;
 using PixelPress.Desktop.ViewModels;
@@ -23,6 +24,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFileSystem, PhysicalFileSystem>();
         services.AddSingleton<JobPlanner>();
         services.AddSingleton<JobExecutor>();
+        services.AddSingleton<IPreviewEncoder>(_ => PreviewEncoding.CreateDefault());
 
         var settingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

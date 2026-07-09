@@ -46,7 +46,7 @@ internal sealed class MagickImageCodec : IImageCodec
         ApplyMetadataPolicy(image, request.MetadataPolicy);
         ApplyResize(image, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
         ApplyQuality(image, request.OutputFormat, request.Quality);
-        image.Format = ToMagickFormat(request.OutputFormat);
+        image.Format = MagickFormatMap.ToMagickFormat(request.OutputFormat);
         image.Write(request.DestinationPath);
 
         return Success(request.DestinationPath);
@@ -68,7 +68,7 @@ internal sealed class MagickImageCodec : IImageCodec
             ApplyMetadataPolicy(firstFrame, request.MetadataPolicy);
             ApplyResize(firstFrame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
             ApplyQuality(firstFrame, request.OutputFormat, request.Quality);
-            firstFrame.Format = ToMagickFormat(request.OutputFormat);
+            firstFrame.Format = MagickFormatMap.ToMagickFormat(request.OutputFormat);
             firstFrame.Write(request.DestinationPath);
             return Success(request.DestinationPath);
         }
@@ -82,7 +82,7 @@ internal sealed class MagickImageCodec : IImageCodec
             ApplyMetadataPolicy(frame, request.MetadataPolicy);
             ApplyResize(frame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
             ApplyQuality(frame, request.OutputFormat, request.Quality);
-            frame.Format = ToMagickFormat(request.OutputFormat);
+            frame.Format = MagickFormatMap.ToMagickFormat(request.OutputFormat);
         }
 
         collection.Write(request.DestinationPath);
@@ -129,17 +129,4 @@ internal sealed class MagickImageCodec : IImageCodec
 
     private static CodecResult Failure(string message) =>
         new() { Success = false, ErrorMessage = message };
-
-    private static MagickFormat ToMagickFormat(ImageFormatId id) => id switch
-    {
-        ImageFormatId.Jpeg => MagickFormat.Jpeg,
-        ImageFormatId.Png => MagickFormat.Png,
-        ImageFormatId.WebP => MagickFormat.WebP,
-        ImageFormatId.Avif => MagickFormat.Avif,
-        ImageFormatId.Tiff => MagickFormat.Tiff,
-        ImageFormatId.Bmp => MagickFormat.Bmp,
-        ImageFormatId.Gif => MagickFormat.Gif,
-        ImageFormatId.JpegXl => MagickFormat.Jxl,
-        _ => throw new NotSupportedException($"{id} is not an encodable format."),
-    };
 }
