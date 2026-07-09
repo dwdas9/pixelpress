@@ -33,7 +33,7 @@ internal sealed class MagickPreviewEncoder : IPreviewEncoder
                 image.Resize(new MagickGeometry(
                     (uint)request.ResizeMaxDimensionPixels,
                     (uint)request.ResizeMaxDimensionPixels)
-                { Less = true });
+                { Greater = true });
             }
 
             if (FormatRegistry.Get(request.OutputFormat).HasQualityDial)

@@ -101,8 +101,10 @@ internal sealed class MagickImageCodec : IImageCodec
 
     /// <summary>Shrinks the image so neither dimension exceeds
     /// <paramref name="maxDimension"/>, preserving aspect ratio.
-    /// <c>Less = true</c> means the geometry only applies when the image
-    /// is larger than it — a smaller source is never upscaled.</summary>
+    /// <c>Greater = true</c> is ImageMagick's <c>&gt;</c> flag: the resize
+    /// applies only when the image is larger than the geometry, so a
+    /// smaller source is never upscaled. (<c>Less</c> is the opposite
+    /// flag and would only enlarge — the bug this fixes.)</summary>
     private static void ApplyResize(IMagickImage<byte> image, bool enabled, int maxDimension)
     {
         if (!enabled)
@@ -110,7 +112,7 @@ internal sealed class MagickImageCodec : IImageCodec
             return;
         }
 
-        image.Resize(new MagickGeometry((uint)maxDimension, (uint)maxDimension) { Less = true });
+        image.Resize(new MagickGeometry((uint)maxDimension, (uint)maxDimension) { Greater = true });
     }
 
     private static void ApplyQuality(IMagickImage<byte> image, ImageFormatId format, int quality)
