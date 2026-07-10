@@ -24,7 +24,9 @@
                     <Color x:Key="SuccessColor">#047857</Color>
                     <Color x:Key="DangerColor">#DC2626</Color>
                     <Color x:Key="StatusBarColor">#EEF0F6</Color>
+                    <Color x:Key="PreviewBackdropColor">#E7EAF1</Color>
 
+                    <SolidColorBrush x:Key="PreviewBackdropBrush" Color="{StaticResource PreviewBackdropColor}" />
                     <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
                     <SolidColorBrush x:Key="CardBrush" Color="{StaticResource CardColor}" />
                     <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
@@ -50,7 +52,9 @@
                     <Color x:Key="SuccessColor">#34D399</Color>
                     <Color x:Key="DangerColor">#F87171</Color>
                     <Color x:Key="StatusBarColor">#111C33</Color>
+                    <Color x:Key="PreviewBackdropColor">#0B1220</Color>
 
+                    <SolidColorBrush x:Key="PreviewBackdropBrush" Color="{StaticResource PreviewBackdropColor}" />
                     <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
                     <SolidColorBrush x:Key="CardBrush" Color="{StaticResource CardColor}" />
                     <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
@@ -212,6 +216,88 @@
     </Style>
     <Style Selector="Border.fileRow:pointerover">
         <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+    </Style>
+
+    <!--
+      Studio (M10). The preview panes sit on a neutral backdrop rather than
+      the card surface, so a white or transparent image still reads as an
+      image and not as empty space.
+    -->
+    <Style Selector="Border.pane">
+        <Setter Property="Background" Value="{DynamicResource PreviewBackdropBrush}" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="TextBlock.paneLabel">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+
+    <!-- Controls-rail section heading -->
+    <Style Selector="TextBlock.railHeading">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+
+    <!-- The slot ADR-0006 reserves for a future per-codec settings section -->
+    <Style Selector="Border.reservedSlot">
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="14,12" />
+    </Style>
+
+    <!-- The one exact number the studio reports, per selected image -->
+    <Style Selector="TextBlock.statLarge">
+        <Setter Property="FontSize" Value="26" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+    </Style>
+
+    <!-- Image selector strip beneath the preview panes -->
+    <Style Selector="ListBox.filmstrip">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style Selector="ListBox.filmstrip ListBoxItem">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0,0,8,0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="ListBox.filmstrip ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBox.filmstrip ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="ListBox.filmstrip ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <Style Selector="ListBoxItem Border.filmstripCard">
+        <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1.5" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="Transitions">
+            <Transitions>
+                <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+                <BrushTransition Property="Background" Duration="0:0:0.15" />
+            </Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="ListBoxItem:selected Border.filmstripCard">
+        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+    </Style>
+    <Style Selector="ListBoxItem:pointerover Border.filmstripCard">
+        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
     </Style>
 
 </Styles>
