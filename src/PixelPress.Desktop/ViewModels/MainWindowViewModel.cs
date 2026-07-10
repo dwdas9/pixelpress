@@ -1,9 +1,11 @@
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PixelPress.Core.Execution;
 using PixelPress.Core.Formats;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
+using PixelPress.Core.Processing;
 using PixelPress.Core.Settings;
 
 namespace PixelPress.Desktop.ViewModels;
@@ -27,15 +29,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly JobPlanner _planner;
     private readonly JobExecutor _executor;
+    private readonly IPreviewEncoder _previewEncoder;
     private IReadOnlyList<string> _inputPaths = [];
     private JobRequest? _currentRequest;
     private CancellationTokenSource? _runCts;
     private CancellationTokenSource? _replanDebounceCts;
+    private CancellationTokenSource? _previewCts;
 
-    public MainWindowViewModel(JobPlanner planner, JobExecutor executor, ISettingsStore settingsStore)
+    public MainWindowViewModel(
+        JobPlanner planner,
+        JobExecutor executor,
+        IPreviewEncoder previewEncoder,
+        ISettingsStore settingsStore)
     {
         _planner = planner;
         _executor = executor;
+        _previewEncoder = previewEncoder;
         AvailableTargetFormats = BuildAvailableTargetFormats();
         SupportedInputSummary = BuildSupportedInputSummary();
 
@@ -77,7 +86,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _ => "Near-original",
     };
 
-    // --- Advanced panel --------------------------------------------------
+    // --- Controls rail ----------------------------------------------------
 
     /// <summary>One selectable entry in the format-override list; <see
     /// cref="Id"/> is null for "keep original format."</summary>
@@ -146,17 +155,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    [ObservableProperty]
-    private bool _isAdvancedPanelExpanded;
-
-    partial void OnIsAdvancedPanelExpandedChanged(bool value) =>
-        OnPropertyChanged(nameof(AdvancedPanelToggleLabel));
-
-    public string AdvancedPanelToggleLabel => IsAdvancedPanelExpanded
-        ? "Advanced options  ▾"
-        : "Advanced options  ▸";
-
-    /// <summary>Snapshot of the advanced panel's current values, saved on
+    /// <summary>Snapshot of the controls rail's current values, saved on
     /// exit via <see cref="ISettingsStore"/>.</summary>
     public AppSettings ExportSettings() => new()
     {
@@ -190,6 +189,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnCurrentPlanChanged(JobPlan? value)
     {
+        var previouslySelectedPath = SelectedPlanItem?.SourcePath;
+        _planItemRows = BuildPlanItemRows(value);
+
         OnPropertyChanged(nameof(ImageCount));
         OnPropertyChanged(nameof(CanOptimize));
         OnPropertyChanged(nameof(OptimizeButtonLabel));
@@ -208,6 +210,28 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasMoreItems));
         OnPropertyChanged(nameof(MoreItemsNote));
         OnPropertyChanged(nameof(StatusBarText));
+
+        // Keep inspecting the same image across a re-plan; fall back to the
+        // first one when it left the batch (or this is a fresh drop).
+        _isApplyingPlan = true;
+        try
+        {
+            SelectedPlanItem = _planItemRows.FirstOrDefault(r => r.SourcePath == previouslySelectedPath)
+                ?? _planItemRows.FirstOrDefault();
+        }
+        finally
+        {
+            _isApplyingPlan = false;
+        }
+
+        // An emptied plan (Start Over, or a failed re-plan) leaves nothing to
+        // preview. The guard above suppressed the selection's own refresh, so
+        // tear the panes down here.
+        if (SelectedPlanItem is null)
+        {
+            _previewCts?.Cancel();
+            ClearPreview();
+        }
     }
 
     // --- Stage ------------------------------------------------------------
@@ -278,24 +302,45 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool HasSkippedFiles => CurrentPlan is { Skipped.Count: > 0 };
 
-    /// <summary>One row of the plan's file table.</summary>
-    public sealed record PlanItemRow(string FileName, string FormatSummary, string SizeText);
+    /// <summary>One row of the plan's file list. Carries the fields the
+    /// studio preview needs (source path, output format, the two byte
+    /// counts) alongside the display strings, so selecting a row is enough
+    /// to build a <see cref="PreviewRequest"/> without re-walking the plan.
+    /// Value equality matters: a re-plan rebuilds this list, and an
+    /// unchanged row compares equal so the current selection survives.</summary>
+    public sealed record PlanItemRow(
+        string SourcePath,
+        string FileName,
+        string FormatSummary,
+        string SizeText,
+        ImageFormatId OutputFormat,
+        long SourceBytes,
+        long EstimatedOutputBytes);
 
     private const int MaxFileRowsShown = 100;
 
-    /// <summary>File table rows for the plan preview, capped at
+    private IReadOnlyList<PlanItemRow> _planItemRows = [];
+
+    /// <summary>File list rows for the studio, capped at
     /// <see cref="MaxFileRowsShown"/> so a 500-item batch renders
-    /// instantly (ItemsControl does not virtualize).</summary>
-    public IReadOnlyList<PlanItemRow> PlanItemRows => CurrentPlan is null
+    /// instantly (ItemsControl does not virtualize). Rebuilt once per
+    /// plan rather than recomputed per binding read.</summary>
+    public IReadOnlyList<PlanItemRow> PlanItemRows => _planItemRows;
+
+    private static List<PlanItemRow> BuildPlanItemRows(JobPlan? plan) => plan is null
         ? []
-        : CurrentPlan.Items
+        : plan.Items
             .Take(MaxFileRowsShown)
             .Select(i => new PlanItemRow(
+                i.SourcePath,
                 Path.GetFileName(i.SourcePath),
                 i.SourceFormat == i.OutputFormat
                     ? FormatRegistry.Get(i.SourceFormat).DisplayName
                     : $"{FormatRegistry.Get(i.SourceFormat).DisplayName} → {FormatRegistry.Get(i.OutputFormat).DisplayName}",
-                FormatBytes(i.SourceBytes)))
+                FormatBytes(i.SourceBytes),
+                i.OutputFormat,
+                i.SourceBytes,
+                i.EstimatedOutputBytes))
             .ToList();
 
     public bool HasMoreItems => ImageCount > MaxFileRowsShown;
@@ -331,6 +376,254 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         SkipReason.Duplicate => "duplicate of another file already included",
         _ => "skipped",
     };
+
+    // --- Live studio preview (ADR-0006 §4) --------------------------------
+
+    /// <summary>True while <see cref="OnCurrentPlanChanged"/> is swapping in
+    /// a new row list. The selection assignment it makes must not kick off
+    /// its own preview — <see cref="ReplanAsync"/> already refreshes the
+    /// preview once the plan lands, and two encodes of the same image is
+    /// pure waste.</summary>
+    private bool _isApplyingPlan;
+
+    /// <summary>The one image the studio panes and statistics strip
+    /// describe. Everything else on screen is whole-batch.</summary>
+    [ObservableProperty]
+    private PlanItemRow? _selectedPlanItem;
+
+    partial void OnSelectedPlanItemChanged(PlanItemRow? value)
+    {
+        if (_isApplyingPlan)
+        {
+            return;
+        }
+
+        _ = RefreshPreviewAsync();
+    }
+
+    [ObservableProperty]
+    private Bitmap? _originalPreviewImage;
+
+    [ObservableProperty]
+    private Bitmap? _outputPreviewImage;
+
+    /// <summary>Source path the "before" pane currently shows, so a quality
+    /// change re-encodes the output without re-decoding the original.</summary>
+    private string? _originalPreviewPath;
+
+    [ObservableProperty]
+    private bool _isPreviewBusy;
+
+    [ObservableProperty]
+    private bool _hasPreview;
+
+    [ObservableProperty]
+    private string _previewFileName = string.Empty;
+
+    [ObservableProperty]
+    private string _previewOriginalSizeText = string.Empty;
+
+    [ObservableProperty]
+    private string _previewOutputSizeText = string.Empty;
+
+    [ObservableProperty]
+    private string _previewSavingsText = string.Empty;
+
+    [ObservableProperty]
+    private string _previewDimensionsText = string.Empty;
+
+    /// <summary>Tells the user whether the numbers beside it are the real
+    /// encode or the heuristic. ADR-0006 forbids conflating the two.</summary>
+    [ObservableProperty]
+    private string _previewAccuracyNote = string.Empty;
+
+    /// <summary>Set when the encode succeeded but no bitmap decoder on this
+    /// platform can display the result (AVIF, JPEG XL). The statistics are
+    /// still exact — only the picture is missing.</summary>
+    [ObservableProperty]
+    private string? _outputPreviewUnavailableNote;
+
+    public bool HasOutputPreviewUnavailableNote => !string.IsNullOrEmpty(OutputPreviewUnavailableNote);
+
+    partial void OnOutputPreviewUnavailableNoteChanged(string? value) =>
+        OnPropertyChanged(nameof(HasOutputPreviewUnavailableNote));
+
+    /// <summary>Zoom applied to both panes at once. 1.0 fits the image to
+    /// the pane; above that the panes scroll.</summary>
+    [ObservableProperty]
+    private double _zoomFactor = 1.0;
+
+    partial void OnZoomFactorChanged(double value) => OnPropertyChanged(nameof(ZoomLabel));
+
+    public string ZoomLabel => $"{ZoomFactor * 100:0}%";
+
+    [RelayCommand]
+    private void ResetZoom() => ZoomFactor = 1.0;
+
+    /// <summary>Encodes the selected image at the current settings and
+    /// republishes the panes and statistics. Cancels any encode still in
+    /// flight, so dragging the quality slider leaves one winner rather than
+    /// letting a stale result overwrite a fresh one.
+    ///
+    /// Every caller launches this without awaiting, so nothing observes what
+    /// it throws. A superseded request is the normal case — <c>Task.Run</c>
+    /// faults with <see cref="OperationCanceledException"/> when the newer
+    /// request cancels the token before the pool picks the work up — and it
+    /// must not reach the UI thread as an unhandled exception.</summary>
+    private async Task RefreshPreviewAsync()
+    {
+        try
+        {
+            await RefreshPreviewCoreAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer settings change is already encoding. Nothing to do.
+        }
+    }
+
+    private async Task RefreshPreviewCoreAsync()
+    {
+        _previewCts?.Cancel();
+        _previewCts?.Dispose();
+        var cts = _previewCts = new CancellationTokenSource();
+        var token = cts.Token;
+
+        if (SelectedPlanItem is not { } row)
+        {
+            ClearPreview();
+            return;
+        }
+
+        HasPreview = true;
+        PreviewFileName = row.FileName;
+        PreviewOriginalSizeText = FormatBytes(row.SourceBytes);
+
+        // The "before" pane depends only on the source file, so it is
+        // decoded once per selection rather than once per slider tick.
+        if (_originalPreviewPath != row.SourcePath)
+        {
+            var sourcePath = row.SourcePath;
+            var decoded = await Task.Run(() => TryDecodeBitmap(() => new Bitmap(sourcePath)), token);
+
+            if (token.IsCancellationRequested)
+            {
+                decoded?.Dispose();
+                return;
+            }
+
+            // Publish before disposing: the old bitmap may still be sitting in
+            // the renderer's current batch, and disposing one it is about to
+            // draw is a crash, not a leak.
+            var previous = OriginalPreviewImage;
+            OriginalPreviewImage = decoded;
+            previous?.Dispose();
+            _originalPreviewPath = row.SourcePath;
+        }
+
+        IsPreviewBusy = true;
+
+        var request = new PreviewRequest
+        {
+            SourcePath = row.SourcePath,
+            OutputFormat = row.OutputFormat,
+            Quality = Quality,
+            MetadataPolicy = StripMetadata ? MetadataPolicy.Strip : MetadataPolicy.Preserve,
+            ResizeEnabled = ResizeEnabled,
+            ResizeMaxDimensionPixels = ResizeMaxDimensionPixels,
+        };
+
+        // Encoding a full-size image blocks for tens of milliseconds or
+        // more; awaiting Task.Run keeps the slider smooth and lands the
+        // property sets back on the UI thread.
+        var result = await Task.Run(() => _previewEncoder.Encode(request), token);
+
+        if (token.IsCancellationRequested)
+        {
+            return;
+        }
+
+        IsPreviewBusy = false;
+        ApplyPreviewResult(result, row);
+    }
+
+    private void ApplyPreviewResult(PreviewResult? result, PlanItemRow row)
+    {
+        if (result is null)
+        {
+            SetOutputPreviewImage(null);
+
+            // Encode failed for this one image. Show the planner's heuristic
+            // rather than nothing, and say so.
+            OutputPreviewUnavailableNote = "This image couldn't be previewed.";
+            PreviewOutputSizeText = FormatBytes(row.EstimatedOutputBytes);
+            PreviewSavingsText = FormatSavings(row.SourceBytes, row.EstimatedOutputBytes);
+            PreviewDimensionsText = string.Empty;
+            PreviewAccuracyNote = "Estimated";
+            return;
+        }
+
+        var bytes = result.OutputImage;
+        SetOutputPreviewImage(TryDecodeBitmap(() => new Bitmap(new MemoryStream(bytes))));
+        OutputPreviewUnavailableNote = OutputPreviewImage is null
+            ? $"{FormatRegistry.Get(row.OutputFormat).DisplayName} previews aren't supported on this system — the numbers beside it are still exact."
+            : null;
+
+        PreviewOutputSizeText = FormatBytes(result.OutputSizeBytes);
+        PreviewSavingsText = FormatSavings(result.SourceSizeBytes, result.OutputSizeBytes, approximate: false);
+        PreviewDimensionsText = result.WasResized
+            ? $"{result.SourceWidth} × {result.SourceHeight}  →  {result.OutputWidth} × {result.OutputHeight}"
+            : $"{result.OutputWidth} × {result.OutputHeight}";
+        PreviewAccuracyNote = "Exact — this image, encoded";
+    }
+
+    /// <summary>Swaps the "after" pane's bitmap, publishing the new one
+    /// before releasing the old — see the note in <see cref="RefreshPreviewAsync"/>.</summary>
+    private void SetOutputPreviewImage(Bitmap? next)
+    {
+        var previous = OutputPreviewImage;
+        OutputPreviewImage = next;
+        previous?.Dispose();
+    }
+
+    private void ClearPreview()
+    {
+        var previousOriginal = OriginalPreviewImage;
+        OriginalPreviewImage = null;
+        previousOriginal?.Dispose();
+
+        SetOutputPreviewImage(null);
+        _originalPreviewPath = null;
+
+        HasPreview = false;
+        IsPreviewBusy = false;
+        PreviewFileName = string.Empty;
+        PreviewOriginalSizeText = string.Empty;
+        PreviewOutputSizeText = string.Empty;
+        PreviewSavingsText = string.Empty;
+        PreviewDimensionsText = string.Empty;
+        PreviewAccuracyNote = string.Empty;
+        OutputPreviewUnavailableNote = null;
+    }
+
+    /// <summary>Bitmap construction throws for formats the platform decoder
+    /// cannot read (AVIF, JPEG XL, HEIC, camera RAW) and for unreadable
+    /// files. The exception type is the decoder's business, not ours, and
+    /// this runs inside a fire-and-forget task where anything that escapes
+    /// takes the process down — so every failure degrades to "no picture."
+    /// The statistics come from the encoder, not from here, and stay exact
+    /// either way.</summary>
+    private static Bitmap? TryDecodeBitmap(Func<Bitmap> create)
+    {
+        try
+        {
+            return create();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 
     // --- Running display properties ---------------------------------
 
@@ -447,9 +740,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void ToggleAdvancedPanel() => IsAdvancedPanelExpanded = !IsAdvancedPanelExpanded;
-
-    [RelayCommand]
     private void StartOver()
     {
         _inputPaths = [];
@@ -514,6 +804,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             CurrentPlan = await Task.Run(() => _planner.CreatePlan(request));
             _currentRequest = request;
             Stage = WorkflowStage.PlanReady;
+
+            // The plan's inputs are exactly the preview's inputs, so this is
+            // the single place the preview is refreshed for a settings change.
+            // Not awaited: the batch estimate is already on screen and must
+            // not wait behind a full-size encode.
+            _ = RefreshPreviewAsync();
         }
         catch (Exception ex) when (ex is ArgumentException or IOException)
         {
@@ -587,7 +883,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.#} {units[unitIndex]}";
     }
 
-    private static string FormatSavings(long sourceBytes, long outputBytes)
+    /// <param name="approximate">False only for the live preview encode,
+    /// whose bytes are measured rather than guessed. ADR-0006 requires the
+    /// UI to keep the two apart, and the tilde is how it says so.</param>
+    private static string FormatSavings(long sourceBytes, long outputBytes, bool approximate = true)
     {
         if (sourceBytes == 0)
         {
@@ -595,10 +894,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var percent = 100.0 * (1.0 - (double)outputBytes / sourceBytes);
+        var prefix = approximate ? "~" : string.Empty;
 
         return percent switch
         {
-            >= 1 => $"~{percent:0}% smaller",
+            >= 1 => $"{prefix}{percent:0}% smaller",
             <= -1 => "roughly the same size (some formats need re-encoding)",
             _ => "roughly the same size",
         };
@@ -611,5 +911,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         _runCts?.Dispose();
         _replanDebounceCts?.Dispose();
+        _previewCts?.Dispose();
+        OriginalPreviewImage?.Dispose();
+        OutputPreviewImage?.Dispose();
     }
 }
