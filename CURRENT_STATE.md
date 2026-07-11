@@ -2,67 +2,116 @@
 
 Class C — overwritten in full at every checkpoint. Not a narrative.
 
-Last updated: 2026-07-09 (M10 mid-milestone checkpoint — slice 1 done)
+Last updated: 2026-07-10 (M10 slice 2 written and committed, NOT yet verified)
 
 ## Current Milestone
 
-M10 — Compression studio UI (in progress; Core seam done, UI not started).
+M10 — Compression studio UI (in progress; Core seam done, studio UI
+written and committed but never run with an image in it).
 
 ## Last Completed Action
 
-M10 slice 1 landed (commits `d192e1e`, `220cfa1`): the read-only
-`IPreviewEncoder` seam from ADR-0006 §4. `IPreviewEncoder` /
-`PreviewRequest` / `PreviewResult` are public in
-`src/PixelPress.Core/Processing/IPreviewEncoder.cs`; the Magick-backed
-`MagickPreviewEncoder` encodes one image at a given quality/format/resize
-to an in-memory buffer and reports exact output bytes + source/output
-dimensions. Exposed via `PreviewEncoding.CreateDefault()`, registered in
-DI (`ServiceCollectionExtensions`), NOT yet consumed by the view model.
-Shared `ImageFormatId→MagickFormat` mapping extracted to
-`MagickFormatMap`. End-to-end encoder tests were added and caught a
-real M8 bug: `ApplyResize` used `MagickGeometry.Less` (the `<` flag =
-upscale-only), so resize never shrank large images — fixed to `Greater`
-(`>`) in both the codec and the preview encoder. Build clean, 59 tests
-pass. (Earlier this session: ADR-0006 + M9 quality slider, both already
-closed out — see RELEASES.)
+M10 slice 2 landed as commit `a2d07c6` — the studio UI consuming
+`IPreviewEncoder`:
+
+- **`MainWindowViewModel`** takes `IPreviewEncoder` (DI already
+  registered it; no wiring change needed). `PlanItemRow` was widened to
+  `(SourcePath, FileName, FormatSummary, SizeText, OutputFormat,
+  SourceBytes, EstimatedOutputBytes)` so a selection alone can build a
+  `PreviewRequest`. `SelectedPlanItem` defaults to the first row and
+  survives a re-plan by `SourcePath`. `RefreshPreviewAsync` encodes on a
+  background thread, cancels the in-flight encode on each change, and
+  falls back to the heuristic estimate when `Encode` returns null.
+  Exposes `OriginalPreviewImage` / `OutputPreviewImage` bitmaps,
+  `PreviewSavingsText`, `PreviewDimensionsText`, `ZoomFactor`.
+  The old advanced-panel toggle is gone — the rail surfaces everything.
+- **`MainWindow.axaml`** state 3 is now the two-pane studio: preview
+  area (side-by-side `ORIGINAL`|`OPTIMIZED` + zoom slider + filmstrip)
+  ‖ controls rail (quality, convert-to, resize, metadata, output, plus
+  a deliberately empty `PER-CODEC SETTINGS` slot per ADR-0006 §5)
+  ‖ a compression-statistics strip. Window is 1180×800, min 980×660.
+- **`AppStyles.axaml`** gained the preview backdrop colour (both theme
+  dictionaries) and the `pane` / `paneLabel` / `railHeading` /
+  `reservedSlot` / `statLarge` / `filmstrip` classes.
+
+ADR-0006's separation is enforced in the UI: `THIS IMAGE` reads
+`Exact — this image, encoded` with no tilde; `WHOLE BATCH` reads
+`Estimated` with a `~`. The two numbers may legitimately disagree.
+
+Three latent crash paths were found and fixed while writing this slice,
+all in the fire-and-forget preview path where an escaped exception kills
+the process: (1) `Task.Run(fn, token)` *faults* with
+`TaskCanceledException` when the token is cancelled before the pool
+picks the work up — which is exactly what a fast slider drag produces —
+so the driver is split into a wrapper that catches
+`OperationCanceledException` plus `RefreshPreviewCoreAsync`; (2) both
+bitmap swaps now publish-then-dispose, because the renderer may still
+hold the old bitmap for the current frame and disposing it is a crash,
+not a leak; (3) `TryDecodeBitmap` catches `Exception`, not a fixed list
+— the platform decoder's exception type for AVIF/JXL/HEIC/RAW is not a
+contract we control.
+
+Also designed around, not shipped as a bug: the quality-aware
+`SizeEstimator` changes each row's `EstimatedOutputBytes`, breaking
+`PlanItemRow` record equality, which would fire
+`OnSelectedPlanItemChanged` on every re-plan *and* `ReplanAsync`'s own
+refresh — two encodes per slider tick. An `_isApplyingPlan` guard makes
+`ReplanAsync` the single trigger point. Don't remove it.
 
 ## Current Blockers
 
-None. Note a verification constraint (not a blocker): the studio preview
-path only runs after a file is dropped, which a headless smoke-launch
-does not exercise, so the remaining UI slice should be built and
-**visually verified in a real run** rather than shipped blind.
+**M10 slice 2 has never been run with an image loaded.** This is the one
+thing standing between here and the M10 close-out.
+
+Verified without a human: solution builds with 0 warnings; 59/59 tests
+pass; the studio XAML parses at runtime; the window comes up at the new
+1180×800 (read back via UI Automation `BoundingRectangle`); the app
+starts and exits cleanly (exit 0, empty stderr) on two separate runs.
+
+Not verified — everything downstream of a file drop, because a
+smoke-launch never gets there. Driving the native "Choose images" dialog
+via UI Automation was attempted and abandoned: `ValuePattern.SetValue`
+times out on the only reachable Edit (the search box),
+`SetForegroundWindow` is a no-op from a background process, and the
+dialog exposes no `File name:` field to UIA. That road spends tokens
+verifying Microsoft's shell dialog, not the studio. It needs a human.
 
 ## Next Immediate Task
 
-M10 slice 2 — the studio UI, consuming `IPreviewEncoder`. Inject
-`IPreviewEncoder` into `MainWindowViewModel` and:
+Run `dotnet run --project src/PixelPress.Desktop`, drag in an image, and
+walk this checklist. The first two are the ones most likely to be wrong:
 
-1. **View-model**: pick a "selected image" from the current plan
-   (default the first item), and on selection/quality/format/resize
-   change, debounced, call `IPreviewEncoder.Encode` on a background
-   thread (`await Task.Run(...)`; assign results after the await so the
-   property set lands on the UI thread). Expose the real output size,
-   real source/output dimensions, a "12.4 MB → 3.1 MB (75% smaller)"
-   stat string, and before/after `Avalonia.Media.Imaging.Bitmap`s
-   (construct the Bitmap from `PreviewResult.OutputImage` bytes; dispose
-   the previous one on replace). Fall back to the heuristic estimate
-   when `Encode` returns null.
-2. **Layout** (`MainWindow.axaml`): evolve the plan-preview into the
-   two-pane studio — preview area (side-by-side original|output + a zoom
-   control, e.g. a `Slider` driving a `LayoutTransform` scale inside a
-   `ScrollViewer`) + controls rail (the existing quality slider, format,
-   resize, metadata, output — leave a clearly-marked empty slot for the
-   future lossy-codec section) + a compression-statistics strip.
-3. Smoke-launch, drop a real image, confirm the preview + live stats
-   update as the quality slider moves, then commit.
+1. **Both panes show the picture**, each fitting its pane — not cropped,
+   not blown up to actual pixel size. Each `Image` is sized to its
+   *pane's* `Bounds` (`{Binding #OriginalPane.Bounds.Width}`) so that
+   zoom 1.0 means "fit". Binding to the `ScrollViewer`'s viewport
+   instead would loop as scrollbars appear and disappear. This binding
+   could still misbehave on first layout.
+2. **The quality slider re-encodes.** Drag it in the rail; after a short
+   pause the `OPTIMIZED` pane and the `THIS IMAGE` numbers change.
+3. Zoom slider (1×–4×) scales both panes; "Fit" returns to 1.0.
+4. The filmstrip switches the selected image and the preview follows.
+5. With resize on, `PreviewDimensionsText` reads `3200 × 2100 → 1024 × 672`.
+6. Convert to AVIF or JPEG XL: the `OPTIMIZED` pane shows the
+   "previews aren't supported on this system" note while the numbers
+   beside it stay exact. (Skia cannot decode these; the encoder still can.)
+7. `THIS IMAGE` says `Exact — this image, encoded` (no tilde);
+   `WHOLE BATCH` says `Estimated` (with `~`).
+8. Dark mode looks right in the new layout.
 
-Do the M10 close-out (row → Done, RELEASES entry) only after slice 2 is
-verified.
+A 3200×2100 test JPEG (556,726 bytes) was generated for this at
+`%LOCALAPPDATA%\Temp\claude\c--Users-dasd-OneDrive---xg5qw-Github-pixelpress\6d4dff27-5ddf-4206-9998-2e9449b42f56\scratchpad\studio-test.jpg`
+— it may have been cleaned up; any photo will do.
 
-## Files worth reading before slice 2 (in addition to the index below)
+Fix whatever the checklist turns up. **Then, and only then**, the M10
+close-out: `docs/ARCHITECTURE.md` M10 row `In progress` → `Done`, a
+`RELEASES.md` entry, this file rewritten, commit. After that, M11
+(packaging) is the last milestone.
 
-- src/PixelPress.Core/Processing/IPreviewEncoder.cs (the seam to consume)
+## Files worth reading before the close-out (in addition to the index below)
+
+- src/PixelPress.Core/Processing/IPreviewEncoder.cs (the consumed seam)
+- RELEASES.md (for the entry's house style)
 
 ## Context Dependency Index
 
