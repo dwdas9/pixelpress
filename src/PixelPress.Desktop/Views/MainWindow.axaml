@@ -1,536 +1,639 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:PixelPress.Desktop.ViewModels"
+        xmlns:shapes="using:Avalonia.Controls.Shapes"
         x:Class="PixelPress.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="PixelPress"
-        Width="1180" Height="800"
-        MinWidth="980" MinHeight="660"
+        Width="1440" Height="900"
+        MinWidth="960" MinHeight="600"
         Background="{DynamicResource CanvasBrush}"
         WindowStartupLocation="CenterScreen">
 
     <!--
-      Three persistent zones: header, content stage (the five workflow
-      states, one visible at a time), and status bar. All visual
-      language lives in Styles/AppStyles.axaml; theming is instant via
-      DynamicResource + theme dictionaries.
+      Workspace layout (M11). Replaces the scrolling wizard with a persistent
+      three-column workspace: queue | viewport | inspector, toolbar above and
+      status bar below. The panes never unmount — the workflow stage
+      (ADR-0006) drives overlays inside the viewport instead of swapping whole
+      screens, so the inspector stays reachable at every stage.
+      All colour lives in Styles/AppStyles.axaml.
     -->
+
     <Grid RowDefinitions="Auto,*,Auto">
 
-        <!-- ============ Header ============ -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="32,20,32,16">
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
-                <Border CornerRadius="10" Width="38" Height="38">
-                    <Border.Background>
-                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
-                            <GradientStop Color="#6366F1" Offset="0" />
-                            <GradientStop Color="#8B5CF6" Offset="1" />
-                        </LinearGradientBrush>
-                    </Border.Background>
-                    <TextBlock Text="⬇" FontSize="19" FontWeight="Bold"
-                               Foreground="White"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </Border>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="PixelPress" FontSize="17" FontWeight="Bold" />
-                    <TextBlock Classes="caption" Text="Optimize images — private, offline" />
+        <!-- ==================== Toolbar ==================== -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource CardBrush}"
+                BorderBrush="{DynamicResource HairlineBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="12,8">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                    <Button Classes="subtle"
+                            Content="＋  Add files"
+                            HotKey="Ctrl+O"
+                            ToolTip.Tip="Add images to the queue (Ctrl+O)"
+                            IsEnabled="{Binding !IsRunning}"
+                            Click="OnAddFilesClick" />
+                    <Button Classes="subtle"
+                            Content="🗀  Add folder"
+                            IsEnabled="{Binding !IsRunning}"
+                            Click="OnAddFolderClick" />
+                    <Button Classes="ghost"
+                            Content="Clear"
+                            IsEnabled="{Binding HasPlan}"
+                            Command="{Binding StartOverCommand}" />
                 </StackPanel>
-            </StackPanel>
 
-            <Button Grid.Column="2" Classes="subtle"
-                    Name="ThemeToggle"
-                    Content="🌙  Dark"
-                    Click="OnToggleThemeClick"
-                    VerticalAlignment="Center" />
-        </Grid>
+                <Rectangle Grid.Column="1"
+                           Width="1" Margin="10,2"
+                           Fill="{DynamicResource HairlineBrush}" />
 
-        <!-- ============ Content stage ============ -->
-        <Grid Grid.Row="1" Margin="32,0,32,20">
-
-            <!-- State 1: awaiting input -->
-            <Grid RowDefinitions="*,Auto" IsVisible="{Binding ShowDropZone}">
-
-                <Border Grid.Row="0" Classes="card" Padding="12">
-                    <Border Name="DropZoneInner"
-                            DragDrop.AllowDrop="True"
-                            Background="Transparent"
-                            CornerRadius="12"
-                            Cursor="Hand"
-                            PointerPressed="OnDropZonePressed">
-                        <Grid>
-                            <Rectangle Name="DropOutline"
-                                       Stroke="{DynamicResource HairlineBrush}"
-                                       StrokeThickness="2"
-                                       StrokeDashArray="6,4"
-                                       RadiusX="12" RadiusY="12"
-                                       Fill="Transparent" />
-                            <StackPanel VerticalAlignment="Center"
-                                        HorizontalAlignment="Center"
-                                        Spacing="14" Margin="24">
-                                <Border Background="{DynamicResource AccentSoftBrush}"
-                                        CornerRadius="32" Width="64" Height="64"
-                                        HorizontalAlignment="Center">
-                                    <TextBlock Text="⬆" FontSize="26"
-                                               Foreground="{DynamicResource AccentBrush}"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center" />
-                                </Border>
-                                <TextBlock Classes="h2"
-                                           Text="Drop images or folders here"
-                                           HorizontalAlignment="Center" />
-                                <TextBlock Classes="body secondary"
-                                           Text="Shrink photos and screenshots without losing what matters — everything stays on your computer."
-                                           TextWrapping="Wrap" MaxWidth="420"
-                                           TextAlignment="Center"
-                                           HorizontalAlignment="Center" />
-                                <StackPanel Orientation="Horizontal" Spacing="8"
-                                            HorizontalAlignment="Center">
-                                    <Button Classes="subtle" Content="Browse files…"
-                                            Click="OnDropZonePressedButton" />
-                                    <Button Classes="subtle" Content="Choose a folder…"
-                                            Click="OnBrowseFolderClick" />
-                                </StackPanel>
-                                <TextBlock Classes="caption"
-                                           Text="{Binding SupportedInputSummary}"
-                                           TextWrapping="Wrap" MaxWidth="440"
-                                           TextAlignment="Center"
-                                           HorizontalAlignment="Center" />
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-                </Border>
-
-                <StackPanel Grid.Row="1" Margin="0,18,0,0" Spacing="10">
-                    <Border Classes="card" Padding="22,16" MaxWidth="580"
-                            HorizontalAlignment="Center">
-                        <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                            <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="1">
-                                <TextBlock Classes="caption" FontWeight="SemiBold" Text="OUTPUT QUALITY" />
-                                <TextBlock Classes="caption" Text="JPEG · WebP · AVIF · JPEG XL" />
-                            </StackPanel>
-                            <Slider Grid.Column="1" Margin="18,0" VerticalAlignment="Center"
-                                    Minimum="1" Maximum="100"
-                                    TickFrequency="1" IsSnapToTickEnabled="True"
-                                    Value="{Binding Quality}" />
-                            <StackPanel Grid.Column="2" VerticalAlignment="Center"
-                                        MinWidth="88" Spacing="0">
-                                <TextBlock Classes="h2" TextAlignment="Right"
-                                           Text="{Binding Quality}" />
-                                <TextBlock Classes="caption" TextAlignment="Right"
-                                           Text="{Binding QualityLabel}" />
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-                    <TextBlock Classes="caption"
-                               Foreground="{DynamicResource DangerBrush}"
-                               Text="{Binding StatusMessage}"
-                               HorizontalAlignment="Center"
-                               IsVisible="{Binding HasStatusMessage}" />
+                <!-- Start and Stop swap on IsRunning, so the primary slot
+                     always holds the one legal batch action. -->
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                    <Button Classes="primary"
+                            Content="{Binding OptimizeButtonLabel}"
+                            HotKey="Ctrl+Return"
+                            ToolTip.Tip="Run the batch (Ctrl+Enter)"
+                            IsVisible="{Binding !IsRunning}"
+                            IsEnabled="{Binding CanOptimize}"
+                            Command="{Binding OptimizeCommand}" />
+                    <Button Classes="primary"
+                            Content="{Binding CancelButtonLabel}"
+                            IsVisible="{Binding IsRunning}"
+                            IsEnabled="{Binding CanCancel}"
+                            Command="{Binding CancelRunCommand}" />
                 </StackPanel>
+
+                <Button Grid.Column="4"
+                        x:Name="ThemeToggle"
+                        Classes="ghost"
+                        Content="🌙  Dark"
+                        Margin="8,0,0,0"
+                        Click="OnToggleThemeClick" />
             </Grid>
+        </Border>
 
-            <!-- State 2: planning -->
-            <StackPanel IsVisible="{Binding IsPlanning}"
-                        VerticalAlignment="Center" HorizontalAlignment="Center"
-                        Spacing="14">
-                <ProgressBar Classes="slim" IsIndeterminate="True" Width="220" />
-                <TextBlock Classes="body secondary"
-                           Text="Looking through your files…"
-                           HorizontalAlignment="Center" />
-            </StackPanel>
+        <!-- ==================== Three columns ==================== -->
+        <Grid Grid.Row="1" ColumnDefinitions="300,Auto,*,Auto,340">
 
-            <!--
-              State 3: the compression studio (M10, ADR-0006 §5).
-              Preview area (left) + controls rail (right) + a statistics
-              strip spanning both. The strip reports the selected image and
-              the whole batch side by side but never merges them: one is an
-              encode, the other a heuristic.
-            -->
-            <Grid RowDefinitions="*,Auto,Auto" ColumnDefinitions="*,332"
-                  IsVisible="{Binding HasPlan}">
+            <!-- ===== Left: asset queue ===== -->
+            <Border Grid.Column="0"
+                    Background="{DynamicResource CardBrush}"
+                    BorderBrush="{DynamicResource HairlineBrush}"
+                    BorderThickness="0,0,1,0">
+                <Grid RowDefinitions="Auto,*,Auto">
 
-                <!-- ======== Preview area ======== -->
-                <Border Grid.Row="0" Grid.Column="0" Classes="card"
-                        Padding="18" Margin="0,0,14,0">
-                    <Grid RowDefinitions="Auto,*,Auto,Auto">
-
-                        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="2,0,2,12">
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Classes="h2" Text="{Binding PreviewFileName}"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Classes="caption" Text="{Binding PreviewDimensionsText}" />
-                            </StackPanel>
-                            <ProgressBar Grid.Column="1" Classes="slim" Width="72"
-                                         IsIndeterminate="True"
-                                         VerticalAlignment="Center"
-                                         IsVisible="{Binding IsPreviewBusy}" />
-                        </Grid>
-
-                        <Grid Grid.Row="1" ColumnDefinitions="*,14,*">
-
-                            <Grid Grid.Column="0" RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" Classes="paneLabel" Text="ORIGINAL"
-                                           Margin="2,0,0,6" />
-                                <Border Grid.Row="1" Classes="pane">
-                                    <Grid Name="OriginalPane">
-                                        <!--
-                                          The image is sized to its pane, not to
-                                          its own pixels, so zoom 1.0 means "fit".
-                                          Binding to the pane's Bounds (set by the
-                                          column) rather than the ScrollViewer's
-                                          viewport keeps measure out of a loop.
-                                        -->
-                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                                      VerticalScrollBarVisibility="Auto">
-                                            <LayoutTransformControl>
-                                                <LayoutTransformControl.LayoutTransform>
-                                                    <ScaleTransform ScaleX="{Binding ZoomFactor}"
-                                                                    ScaleY="{Binding ZoomFactor}" />
-                                                </LayoutTransformControl.LayoutTransform>
-                                                <Image Source="{Binding OriginalPreviewImage}"
-                                                       Stretch="Uniform"
-                                                       Width="{Binding #OriginalPane.Bounds.Width}"
-                                                       Height="{Binding #OriginalPane.Bounds.Height}" />
-                                            </LayoutTransformControl>
-                                        </ScrollViewer>
-                                    </Grid>
-                                </Border>
-                            </Grid>
-
-                            <Grid Grid.Column="2" RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" Classes="paneLabel" Text="OPTIMIZED"
-                                           Margin="2,0,0,6" />
-                                <Border Grid.Row="1" Classes="pane">
-                                    <Grid Name="OutputPane">
-                                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                                      VerticalScrollBarVisibility="Auto">
-                                            <LayoutTransformControl>
-                                                <LayoutTransformControl.LayoutTransform>
-                                                    <ScaleTransform ScaleX="{Binding ZoomFactor}"
-                                                                    ScaleY="{Binding ZoomFactor}" />
-                                                </LayoutTransformControl.LayoutTransform>
-                                                <Image Source="{Binding OutputPreviewImage}"
-                                                       Stretch="Uniform"
-                                                       Width="{Binding #OutputPane.Bounds.Width}"
-                                                       Height="{Binding #OutputPane.Bounds.Height}" />
-                                            </LayoutTransformControl>
-                                        </ScrollViewer>
-                                        <TextBlock Classes="caption"
-                                                   Text="{Binding OutputPreviewUnavailableNote}"
-                                                   IsVisible="{Binding HasOutputPreviewUnavailableNote}"
-                                                   TextWrapping="Wrap" MaxWidth="240"
-                                                   TextAlignment="Center"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center" />
-                                    </Grid>
-                                </Border>
-                            </Grid>
-                        </Grid>
-
-                        <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,Auto" Margin="2,14,2,0">
-                            <TextBlock Grid.Column="0" Classes="railHeading" Text="ZOOM"
+                    <StackPanel Grid.Row="0" Margin="14,12,14,8" Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0"
+                                       Classes="railHeading"
+                                       Text="QUEUE"
                                        VerticalAlignment="Center" />
-                            <Slider Grid.Column="1" Margin="14,0" VerticalAlignment="Center"
-                                    Minimum="1" Maximum="4"
-                                    TickFrequency="0.25" IsSnapToTickEnabled="True"
-                                    Value="{Binding ZoomFactor}" />
-                            <TextBlock Grid.Column="2" Classes="body secondary"
-                                       MinWidth="48" TextAlignment="Right"
-                                       Text="{Binding ZoomLabel}" VerticalAlignment="Center" />
-                            <Button Grid.Column="3" Classes="ghost" Margin="8,0,0,0"
-                                    Content="Fit" Command="{Binding ResetZoomCommand}" />
+                            <TextBlock Grid.Column="1"
+                                       Classes="caption"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding ImageCount, StringFormat='{}{0} items'}" />
                         </Grid>
 
-                        <StackPanel Grid.Row="3" Spacing="6" Margin="0,12,0,0">
-                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-                            <ListBox Classes="filmstrip" Margin="0,6,0,0" MaxHeight="62"
-                                     ItemsSource="{Binding PlanItemRows}"
-                                     SelectedItem="{Binding SelectedPlanItem}"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                     ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                <ListBox.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" />
-                                    </ItemsPanelTemplate>
-                                </ListBox.ItemsPanel>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Classes="filmstripCard">
-                                            <StackPanel Spacing="1" MaxWidth="160">
-                                                <TextBlock Classes="body" FontSize="13"
-                                                           Text="{Binding FileName}"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Classes="caption"
-                                                           Text="{Binding FormatSummary}" />
-                                            </StackPanel>
+                        <!-- Filters earn their keep after a run with failures,
+                             when the three bad files are buried among ninety-
+                             seven good ones. -->
+                        <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding HasPlan}">
+                            <RadioButton Classes="chip"
+                                         GroupName="QueueFilter"
+                                         Content="All"
+                                         IsChecked="{Binding SelectedQueueFilter,
+                                                     Converter={x:Static vm:EnumMatchConverter.Instance},
+                                                     ConverterParameter={x:Static vm:QueueFilter.All}}" />
+                            <RadioButton Classes="chip"
+                                         GroupName="QueueFilter"
+                                         Content="{Binding OptimizedCount, StringFormat='Done ({0})'}"
+                                         IsChecked="{Binding SelectedQueueFilter,
+                                                     Converter={x:Static vm:EnumMatchConverter.Instance},
+                                                     ConverterParameter={x:Static vm:QueueFilter.Optimized}}" />
+                            <RadioButton Classes="chip"
+                                         GroupName="QueueFilter"
+                                         Content="{Binding FailedItemCount, StringFormat='Failed ({0})'}"
+                                         IsChecked="{Binding SelectedQueueFilter,
+                                                     Converter={x:Static vm:EnumMatchConverter.Instance},
+                                                     ConverterParameter={x:Static vm:QueueFilter.Failed}}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Selecting a row drives the viewport and the statistics
+                         overlay; everything else on screen is whole-batch. -->
+                    <ListBox Grid.Row="1"
+                             x:Name="QueueList"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             Padding="6,0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ItemsSource="{Binding VisibleQueueRows}"
+                             SelectedItem="{Binding SelectedPlanItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:PlanItemRow">
+                                <Grid ColumnDefinitions="Auto,*,Auto"
+                                      Height="46"
+                                      Margin="0,1"
+                                      ToolTip.Tip="{Binding SourcePath}">
+
+                                    <!-- The badge is the fallback, not the
+                                         placeholder: AVIF and RAW have no
+                                         platform decoder, so their rows keep it
+                                         for good. -->
+                                    <Panel Grid.Column="0" Width="34" Height="34" VerticalAlignment="Center">
+                                        <Border CornerRadius="6"
+                                                Background="{DynamicResource AccentSoftBrush}">
+                                            <TextBlock Text="{Binding OutputFormatName}"
+                                                       FontSize="9"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentBrush}"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
                                         </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock Classes="caption" Text="{Binding MoreItemsNote}"
-                                       IsVisible="{Binding HasMoreItems}" />
+                                        <Border CornerRadius="6" ClipToBounds="True">
+                                            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                                        </Border>
+                                    </Panel>
+
+                                    <StackPanel Grid.Column="1"
+                                                Margin="10,0,8,0"
+                                                VerticalAlignment="Center"
+                                                Spacing="1">
+                                        <TextBlock Text="{Binding FileName}"
+                                                   FontSize="13"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding FormatSummary}"
+                                                   Classes="caption"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2"
+                                                Orientation="Horizontal"
+                                                Spacing="6"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding SizeText}" Classes="caption" />
+                                        <TextBlock Text="✓"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="{DynamicResource SuccessBrush}"
+                                                   IsVisible="{Binding IsOptimized}" />
+                                        <TextBlock Text="!"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="{DynamicResource DangerBrush}"
+                                                   IsVisible="{Binding IsFailed}"
+                                                   ToolTip.Tip="{Binding ErrorMessage}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="2"
+                               Classes="caption"
+                               Margin="14,8"
+                               IsVisible="{Binding HasMoreItems}"
+                               Text="{Binding MoreItemsNote}" />
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="4"
+                          Background="Transparent"
+                          ResizeDirection="Columns" />
+
+            <!-- ===== Center: viewport ===== -->
+            <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto">
+
+                <!-- Which image, and how exact its numbers are -->
+                <Border Grid.Row="0"
+                        Padding="16,10"
+                        IsVisible="{Binding HasPreview}"
+                        BorderBrush="{DynamicResource HairlineBrush}"
+                        BorderThickness="0,0,0,1">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="1">
+                            <TextBlock Text="{Binding PreviewFileName}"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding PreviewDimensionsText}" Classes="caption" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="{Binding ZoomLabel}"
+                                       Classes="caption"
+                                       VerticalAlignment="Center"
+                                       Width="42"
+                                       TextAlignment="Right" />
+                            <Slider x:Name="ZoomSlider"
+                                    Width="120"
+                                    Minimum="0.25" Maximum="4"
+                                    VerticalAlignment="Center"
+                                    Value="{Binding ZoomFactor}" />
+                            <Button Classes="ghost"
+                                    Content="Fit"
+                                    Command="{Binding ResetZoomCommand}" />
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <!-- ======== Controls rail ======== -->
-                <Border Grid.Row="0" Grid.Column="1" Classes="card" Padding="20">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel Spacing="20">
+                <!-- The comparison surface. Both panes render the same image
+                     box; the "after" pane is clipped to a band whose width the
+                     code-behind drives from the handle (Phase 2). -->
+                <Border Grid.Row="1" Classes="pane" Margin="16">
+                    <Panel>
+                        <ScrollViewer x:Name="CompareScroller"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto"
+                                      IsVisible="{Binding HasPreview}">
+                            <LayoutTransformControl HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center">
+                                <LayoutTransformControl.LayoutTransform>
+                                    <ScaleTransform ScaleX="{Binding ZoomFactor}"
+                                                    ScaleY="{Binding ZoomFactor}" />
+                                </LayoutTransformControl.LayoutTransform>
 
-                            <StackPanel Spacing="8">
-                                <TextBlock Classes="railHeading" Text="QUALITY" />
-                                <Grid ColumnDefinitions="Auto,*">
-                                    <TextBlock Grid.Column="0" Classes="h2" Text="{Binding Quality}" />
-                                    <TextBlock Grid.Column="1" Classes="body secondary"
-                                               TextAlignment="Right" VerticalAlignment="Bottom"
-                                               Text="{Binding QualityLabel}" />
+                                <Panel x:Name="CompareHost" MinWidth="240" MinHeight="240">
+
+                                    <Image Source="{Binding OriginalPreviewImage}" Stretch="Uniform" />
+
+                                    <!-- AfterClip.Width is set imperatively on drag;
+                                         the inner Image keeps the host's full box so
+                                         clipping reveals rather than squeezes it. -->
+                                    <Border x:Name="AfterClip"
+                                            HorizontalAlignment="Left"
+                                            ClipToBounds="True">
+                                        <Image Source="{Binding OutputPreviewImage}"
+                                               Stretch="Uniform"
+                                               HorizontalAlignment="Left"
+                                               Width="{Binding #CompareHost.Bounds.Width}"
+                                               Height="{Binding #CompareHost.Bounds.Height}" />
+                                    </Border>
+
+                                    <Canvas x:Name="HandleLayer" Background="Transparent">
+                                        <shapes:Rectangle x:Name="DividerLine"
+                                                          Width="2"
+                                                          Height="{Binding #CompareHost.Bounds.Height}"
+                                                          Fill="White"
+                                                          Opacity="0.9" />
+                                        <Border x:Name="DividerHandle"
+                                                Width="28" Height="28"
+                                                CornerRadius="14"
+                                                Background="White"
+                                                BoxShadow="0 2 8 0 #40000000"
+                                                Cursor="SizeWestEast">
+                                            <TextBlock Text="⇄"
+                                                       Foreground="#0F172A"
+                                                       FontSize="13"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                    </Canvas>
+                                </Panel>
+                            </LayoutTransformControl>
+                        </ScrollViewer>
+
+                        <!-- Floating pane labels -->
+                        <Border IsVisible="{Binding HasPreview}"
+                                HorizontalAlignment="Left" VerticalAlignment="Top"
+                                Margin="12" Padding="8,4" CornerRadius="6"
+                                Background="#99000000">
+                            <TextBlock Text="ORIGINAL" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                        </Border>
+                        <Border IsVisible="{Binding HasPreview}"
+                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Margin="12" Padding="8,4" CornerRadius="6"
+                                Background="#99000000">
+                            <TextBlock Text="OPTIMIZED" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                        </Border>
+
+                        <!-- Statistics overlay. PreviewAccuracyNote says whether
+                             these bytes were measured or estimated — ADR-0006
+                             forbids conflating the two. -->
+                        <Border IsVisible="{Binding HasPreview}"
+                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                Margin="16" Padding="18,12" CornerRadius="12"
+                                Background="#CC000000">
+                            <StackPanel Orientation="Horizontal" Spacing="22">
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="Original" FontSize="10" Foreground="#94A3B8" />
+                                    <TextBlock Text="{Binding PreviewOriginalSizeText}"
+                                               FontSize="15" FontWeight="SemiBold" Foreground="White" />
+                                </StackPanel>
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="Optimized" FontSize="10" Foreground="#94A3B8" />
+                                    <TextBlock Text="{Binding PreviewOutputSizeText}"
+                                               FontSize="15" FontWeight="SemiBold" Foreground="White" />
+                                </StackPanel>
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="{Binding PreviewAccuracyNote}"
+                                               FontSize="10" Foreground="#94A3B8" />
+                                    <TextBlock Text="{Binding PreviewSavingsText}"
+                                               FontSize="15" FontWeight="Bold"
+                                               Foreground="{DynamicResource SuccessBrush}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border IsVisible="{Binding IsPreviewBusy}"
+                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                Margin="16" Padding="10,6" CornerRadius="8"
+                                Background="#CC000000">
+                            <TextBlock Text="Encoding…" FontSize="11" Foreground="White" />
+                        </Border>
+
+                        <!-- Encode succeeded, but no decoder here can show it -->
+                        <Border IsVisible="{Binding HasOutputPreviewUnavailableNote}"
+                                HorizontalAlignment="Center" VerticalAlignment="Center"
+                                MaxWidth="360" Padding="16,12" CornerRadius="10"
+                                Background="#CC000000">
+                            <TextBlock Text="{Binding OutputPreviewUnavailableNote}"
+                                       FontSize="12" Foreground="White"
+                                       TextWrapping="Wrap" TextAlignment="Center" />
+                        </Border>
+
+                        <!-- Empty state / drop target -->
+                        <Border x:Name="DropZoneInner"
+                                IsVisible="{Binding ShowDropZone}"
+                                Background="Transparent"
+                                CornerRadius="10"
+                                PointerPressed="OnDropZonePressed">
+                            <Panel>
+                                <shapes:Rectangle x:Name="DropOutline"
+                                                  Margin="28"
+                                                  RadiusX="12" RadiusY="12"
+                                                  Stroke="{DynamicResource HairlineBrush}"
+                                                  StrokeThickness="2"
+                                                  StrokeDashArray="6,4"
+                                                  Fill="Transparent" />
+                                <StackPanel HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Spacing="8">
+                                    <TextBlock Text="Drop images here"
+                                               Classes="h2"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding SupportedInputSummary}"
+                                               Classes="caption"
+                                               MaxWidth="420"
+                                               TextWrapping="Wrap"
+                                               TextAlignment="Center" />
+                                    <Button Classes="subtle"
+                                            Content="Choose files…"
+                                            HorizontalAlignment="Center"
+                                            Margin="0,8,0,0"
+                                            Click="OnAddFilesClick" />
+                                </StackPanel>
+                            </Panel>
+                        </Border>
+
+                        <Border IsVisible="{Binding IsPlanning}"
+                                Background="{DynamicResource PreviewBackdropBrush}">
+                            <TextBlock Text="Reading files…"
+                                       Classes="body secondary"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+
+                        <!-- Summary sits over the viewport rather than owning a
+                             screen, so the queue and inspector stay visible and
+                             a second pass needs no back-navigation. -->
+                        <Border IsVisible="{Binding HasSummary}"
+                                Background="{DynamicResource PreviewBackdropBrush}">
+                            <StackPanel HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        MaxWidth="480"
+                                        Spacing="10">
+                                <TextBlock Text="{Binding SummaryHeadline}"
+                                           Classes="h2"
+                                           HorizontalAlignment="Center"
+                                           TextAlignment="Center" />
+                                <TextBlock Text="{Binding SummarySavings}"
+                                           Classes="stat"
+                                           HorizontalAlignment="Center" />
+                                <TextBlock Classes="caption"
+                                           HorizontalAlignment="Center"
+                                           Text="{Binding SummaryOriginalSizeText, StringFormat='{}{0} before'}" />
+                                <TextBlock Classes="caption"
+                                           HorizontalAlignment="Center"
+                                           Text="{Binding SummaryFinalSizeText, StringFormat='{}{0} after'}" />
+
+                                <ItemsControl ItemsSource="{Binding FailureMessages}"
+                                              IsVisible="{Binding HasFailures}"
+                                              Margin="0,8,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <TextBlock Text="{Binding}"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource DangerBrush}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="8"
+                                            HorizontalAlignment="Center"
+                                            Margin="0,8,0,0">
+                                    <Button Classes="subtle"
+                                            Content="Open output folder"
+                                            Click="OnOpenOutputFolderClick" />
+                                    <Button Classes="primary"
+                                            Content="Start over"
+                                            Command="{Binding StartOverCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Panel>
+                </Border>
+
+                <!-- Batch-level warnings: fallbacks, renames, skips -->
+                <StackPanel Grid.Row="2" Margin="16,0,16,12" Spacing="3">
+                    <TextBlock Classes="caption"
+                               IsVisible="{Binding HasFormatFallbacks}"
+                               Text="{Binding FallbackSummary}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Classes="caption"
+                               IsVisible="{Binding HasRenames}"
+                               Text="{Binding RenamedSummary}"
+                               TextWrapping="Wrap" />
+                    <ItemsControl ItemsSource="{Binding SkippedGroups}"
+                                  IsVisible="{Binding HasSkippedFiles}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <TextBlock Text="{Binding}" Classes="caption" TextWrapping="Wrap" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Grid>
+
+            <GridSplitter Grid.Column="3" Width="4"
+                          Background="Transparent"
+                          ResizeDirection="Columns" />
+
+            <!-- ===== Right: inspector ===== -->
+            <Border Grid.Column="4"
+                    Background="{DynamicResource CardBrush}"
+                    BorderBrush="{DynamicResource HairlineBrush}"
+                    BorderThickness="1,0,0,0">
+                <ScrollViewer>
+                    <StackPanel Margin="14" Spacing="6">
+
+                        <TextBlock Classes="railHeading" Text="INSPECTOR" Margin="2,4,2,6" />
+
+                        <Expander Header="Format" IsExpanded="True">
+                            <StackPanel Spacing="8" Margin="0,6,0,2">
+                                <ComboBox HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding AvailableTargetFormats}"
+                                          SelectedItem="{Binding SelectedTargetFormatOption}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:MainWindowViewModel+FormatOption">
+                                            <TextBlock Text="{Binding DisplayName}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <TextBlock Classes="caption"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SupportedInputSummary}" />
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="Quality" IsExpanded="True">
+                            <StackPanel Spacing="6" Margin="0,6,0,2">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0"
+                                               Classes="caption"
+                                               Text="{Binding QualityLabel}"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Quality}"
+                                               FontWeight="SemiBold"
+                                               FontSize="13" />
                                 </Grid>
                                 <Slider Minimum="1" Maximum="100"
-                                        TickFrequency="1" IsSnapToTickEnabled="True"
+                                        TickFrequency="1"
+                                        IsSnapToTickEnabled="True"
                                         Value="{Binding Quality}" />
-                                <TextBlock Classes="caption" TextWrapping="Wrap"
-                                           Text="Applies to JPEG, WebP, AVIF and JPEG XL. PNG and BMP are lossless and ignore it." />
                             </StackPanel>
+                        </Expander>
 
-                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-
-                            <StackPanel Spacing="8">
-                                <TextBlock Classes="railHeading" Text="CONVERT TO" />
-                                <ListBox Classes="presets"
-                                         ItemsSource="{Binding AvailableTargetFormats}"
-                                         SelectedItem="{Binding SelectedTargetFormatOption}">
-                                    <ListBox.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel Orientation="Horizontal" />
-                                        </ItemsPanelTemplate>
-                                    </ListBox.ItemsPanel>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Classes="presetCard" Padding="10,7">
-                                                <TextBlock Text="{Binding DisplayName}" FontSize="12" />
-                                            </Border>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </StackPanel>
-
-                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-
-                            <StackPanel Spacing="10">
-                                <TextBlock Classes="railHeading" Text="RESIZE" />
-                                <CheckBox Content="Shrink images larger than"
+                        <Expander Header="Resize" IsExpanded="False">
+                            <StackPanel Spacing="8" Margin="0,6,0,2">
+                                <CheckBox Content="Limit longest edge"
                                           IsChecked="{Binding ResizeEnabled}" />
-                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="26,0,0,0">
-                                    <NumericUpDown Value="{Binding ResizeMaxDimensionPixels}"
-                                                   Minimum="1" Maximum="20000" Increment="64"
-                                                   FormatString="0" Width="128"
-                                                   IsEnabled="{Binding ResizeEnabled}" />
-                                    <TextBlock Classes="body secondary" Text="px"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
+                                <NumericUpDown Minimum="16" Maximum="20000"
+                                               Increment="64"
+                                               FormatString="0"
+                                               IsEnabled="{Binding ResizeEnabled}"
+                                               Value="{Binding ResizeMaxDimensionPixels}" />
+                                <TextBlock Classes="caption"
+                                           TextWrapping="Wrap"
+                                           Text="Images smaller than this keep their original size." />
                             </StackPanel>
+                        </Expander>
 
-                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-
-                            <StackPanel Spacing="8">
-                                <TextBlock Classes="railHeading" Text="METADATA" />
-                                <CheckBox Content="Remove EXIF, location and camera data"
+                        <Expander Header="Metadata" IsExpanded="False">
+                            <StackPanel Spacing="8" Margin="0,6,0,2">
+                                <CheckBox Content="Strip metadata"
                                           IsChecked="{Binding StripMetadata}" />
+                                <TextBlock Classes="caption"
+                                           TextWrapping="Wrap"
+                                           Text="Removes EXIF, GPS and colour-profile tags." />
                             </StackPanel>
+                        </Expander>
 
-                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-
-                            <StackPanel Spacing="8">
-                                <TextBlock Classes="railHeading" Text="OUTPUT" />
-                                <CheckBox Content="Overwrite the original files"
+                        <Expander Header="Output" IsExpanded="True">
+                            <StackPanel Spacing="8" Margin="0,6,0,2">
+                                <CheckBox Content="Overwrite originals"
                                           IsChecked="{Binding OverwriteOriginals}" />
-                                <TextBlock Classes="caption" Margin="26,0,0,0" TextWrapping="Wrap"
-                                           Foreground="{DynamicResource DangerBrush}"
-                                           Text="Replaces original files — cannot be undone."
-                                           IsVisible="{Binding OverwriteOriginals}" />
                                 <StackPanel Spacing="6" IsVisible="{Binding ShowOutputFolderControl}">
-                                    <TextBlock Classes="caption" TextWrapping="Wrap"
-                                               Text="{Binding OutputDirectory}" />
-                                    <Button Classes="subtle" Content="Change output folder…"
-                                            Click="OnChangeOutputFolderClick"
-                                            HorizontalAlignment="Left" />
+                                    <TextBlock Text="{Binding OutputDirectory}"
+                                               Classes="caption"
+                                               TextWrapping="Wrap" />
+                                    <Button Classes="subtle"
+                                            Content="Change folder…"
+                                            HorizontalAlignment="Stretch"
+                                            Click="OnChangeOutputFolderClick" />
                                 </StackPanel>
                             </StackPanel>
+                        </Expander>
 
-                            <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-
-                            <!--
-                              Deliberately empty. ADR-0006 §5 reserves this slot so
-                              a future per-codec settings section drops in here
-                              without another re-layout of the studio.
-                            -->
-                            <Border Classes="reservedSlot">
-                                <StackPanel Spacing="4">
-                                    <TextBlock Classes="railHeading" Text="PER-CODEC SETTINGS" />
-                                    <TextBlock Classes="caption" TextWrapping="Wrap"
-                                               Text="Reserved for a later release — chroma subsampling, encoder effort, progressive scan." />
-                                </StackPanel>
-                            </Border>
-
-                        </StackPanel>
-                    </ScrollViewer>
-                </Border>
-
-                <!-- ======== Compression statistics strip ======== -->
-                <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-                        Classes="card" Padding="24,18" Margin="0,14,0,0">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnDefinitions="*,Auto,*">
-
-                            <StackPanel Grid.Column="0" Spacing="3">
-                                <TextBlock Classes="railHeading" Text="THIS IMAGE" />
-                                <TextBlock Classes="statLarge" Text="{Binding PreviewSavingsText}" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Classes="body secondary" Text="{Binding PreviewOriginalSizeText}" />
-                                    <TextBlock Classes="body secondary" Text="→" />
-                                    <TextBlock Classes="body" FontWeight="SemiBold"
-                                               Text="{Binding PreviewOutputSizeText}" />
-                                    <TextBlock Classes="caption" VerticalAlignment="Center"
-                                               Text="{Binding PreviewAccuracyNote}" />
-                                </StackPanel>
+                        <!-- Whole-batch estimate. Distinct from the viewport
+                             overlay, which reports one exactly-encoded image. -->
+                        <Border Classes="reservedSlot" Margin="0,8,0,0" IsVisible="{Binding HasPlan}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="railHeading" Text="BATCH ESTIMATE" />
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Text="Original" Classes="caption" />
+                                    <TextBlock Grid.Column="1" Text="{Binding OriginalSizeText}" FontSize="12" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Text="Estimated" Classes="caption" />
+                                    <TextBlock Grid.Column="1" Text="{Binding EstimatedSizeText}" FontSize="12" />
+                                </Grid>
+                                <TextBlock Text="{Binding EstimatedSavingsSummary}"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource SuccessBrush}"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
-
-                            <Border Grid.Column="1" Width="1" Margin="28,2"
-                                    Background="{DynamicResource HairlineBrush}" />
-
-                            <StackPanel Grid.Column="2" Spacing="3">
-                                <TextBlock Classes="railHeading" Text="WHOLE BATCH" />
-                                <TextBlock Classes="statLarge" Text="{Binding EstimatedSavingsSummary}" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Classes="body secondary" Text="{Binding OriginalSizeText}" />
-                                    <TextBlock Classes="body secondary" Text="→" />
-                                    <TextBlock Classes="body" FontWeight="SemiBold"
-                                               Text="{Binding EstimatedSizeText}" />
-                                    <TextBlock Classes="caption" Text="Estimated"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                                <TextBlock Classes="caption" TextWrapping="Wrap"
-                                           Text="Resize is on — actual savings may exceed this estimate."
-                                           IsVisible="{Binding ResizeEnabled}" />
-                            </StackPanel>
-                        </Grid>
-
-                        <StackPanel Spacing="3">
-                            <TextBlock Classes="caption"
-                                       Text="{Binding FallbackSummary}"
-                                       IsVisible="{Binding HasFormatFallbacks}" />
-                            <TextBlock Classes="caption"
-                                       Text="{Binding RenamedSummary}"
-                                       IsVisible="{Binding HasRenames}" />
-                            <ItemsControl ItemsSource="{Binding SkippedGroups}"
-                                          IsVisible="{Binding HasSkippedFiles}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Classes="caption" Text="{Binding}" />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
+                        </Border>
                     </StackPanel>
-                </Border>
-
-                <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
-                            Margin="0,14,0,0" Spacing="6">
-                    <Button Classes="primary"
-                            Content="{Binding OptimizeButtonLabel}"
-                            Command="{Binding OptimizeCommand}"
-                            IsEnabled="{Binding CanOptimize}"
-                            HorizontalAlignment="Stretch" />
-                    <Button Classes="ghost"
-                            Content="Start Over"
-                            Command="{Binding StartOverCommand}"
-                            HorizontalAlignment="Center" />
-                </StackPanel>
-            </Grid>
-
-            <!-- State 4: running -->
-            <Grid RowDefinitions="*,Auto" IsVisible="{Binding IsRunning}">
-                <Border Grid.Row="0" Classes="card" VerticalAlignment="Center">
-                    <StackPanel Spacing="18">
-                        <TextBlock Classes="h2" Text="Optimizing your images…"
-                                   HorizontalAlignment="Center" />
-                        <ProgressBar Classes="slim"
-                                     Minimum="0" Maximum="100"
-                                     Value="{Binding ProgressPercent}" />
-                        <TextBlock Classes="caption"
-                                   Text="{Binding ProgressLabel}"
-                                   HorizontalAlignment="Center" />
-                    </StackPanel>
-                </Border>
-                <Button Grid.Row="1" Classes="ghost" Margin="0,16,0,0"
-                        Content="{Binding CancelButtonLabel}"
-                        Command="{Binding CancelRunCommand}"
-                        IsEnabled="{Binding CanCancel}"
-                        HorizontalAlignment="Center" />
-            </Grid>
-
-            <!-- State 5: completion summary -->
-            <Grid RowDefinitions="*,Auto" IsVisible="{Binding HasSummary}">
-
-                <Border Grid.Row="0" Classes="card" VerticalAlignment="Top">
-                    <StackPanel Spacing="18">
-                        <StackPanel Spacing="6">
-                            <TextBlock Classes="h1" Text="{Binding SummaryHeadline}" />
-                            <TextBlock Classes="stat" Text="{Binding SummarySavings}" />
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Classes="body secondary" Text="{Binding SummaryOriginalSizeText}" />
-                                <TextBlock Classes="body secondary" Text="→" />
-                                <TextBlock Classes="body" FontWeight="SemiBold" Text="{Binding SummaryFinalSizeText}" />
-                            </StackPanel>
-                        </StackPanel>
-
-                        <Border Height="1" Background="{DynamicResource HairlineBrush}" />
-
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="body" FontWeight="Medium" Text="Saved to" />
-                            <TextBlock Classes="body secondary"
-                                       Text="{Binding OutputDirectory}"
-                                       TextTrimming="CharacterEllipsis" MaxWidth="460" />
-                        </StackPanel>
-
-                        <StackPanel IsVisible="{Binding HasFailures}" Spacing="6">
-                            <TextBlock Classes="body" FontWeight="Medium"
-                                       Foreground="{DynamicResource DangerBrush}"
-                                       Text="A few files couldn't be processed" />
-                            <ItemsControl ItemsSource="{Binding FailureMessages}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Classes="caption" Text="{Binding}" TextWrapping="Wrap" />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <StackPanel Grid.Row="1" Margin="0,16,0,0" Spacing="8">
-                    <Button Classes="primary"
-                            Content="Open Output Folder"
-                            Click="OnOpenOutputFolderClick"
-                            HorizontalAlignment="Stretch" />
-                    <Button Classes="ghost"
-                            Content="Optimize More Images"
-                            Command="{Binding StartOverCommand}"
-                            HorizontalAlignment="Center" />
-                </StackPanel>
-            </Grid>
-
+                </ScrollViewer>
+            </Border>
         </Grid>
 
-        <!-- ============ Status bar ============ -->
-        <Border Grid.Row="2" Background="{DynamicResource StatusBarBrush}"
-                Padding="32,8">
-            <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Classes="caption" Text="{Binding StatusBarText}" />
-                <TextBlock Grid.Column="1" Classes="caption" Text="PixelPress 0.1" />
+        <!-- ==================== Status bar ==================== -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource StatusBarBrush}"
+                BorderBrush="{DynamicResource HairlineBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="14,6">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="{Binding StatusBarText}"
+                           Classes="caption"
+                           VerticalAlignment="Center" />
+
+                <TextBlock Grid.Column="1"
+                           Margin="14,0"
+                           Classes="caption"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding HasStatusMessage}"
+                           Foreground="{DynamicResource DangerBrush}"
+                           Text="{Binding StatusMessage}" />
+
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="12"
+                            Margin="0,0,10,0"
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding IsRunning}">
+                    <TextBlock Classes="caption"
+                               MaxWidth="280"
+                               TextTrimming="CharacterEllipsis"
+                               Text="{Binding ProgressLabel}" />
+                    <TextBlock Classes="caption"
+                               IsVisible="{Binding HasRunMetrics}"
+                               Text="{Binding ThroughputText}" />
+                    <TextBlock Classes="caption"
+                               IsVisible="{Binding HasRunMetrics}"
+                               Text="{Binding EtaText, StringFormat='{}{0} left'}" />
+                </StackPanel>
+
+                <ProgressBar Grid.Column="3"
+                             Classes="slim"
+                             Width="200"
+                             VerticalAlignment="Center"
+                             IsVisible="{Binding IsRunning}"
+                             Minimum="0" Maximum="100"
+                             Value="{Binding ProgressPercent}" />
             </Grid>
         </Border>
-
     </Grid>
 </Window>

@@ -136,6 +136,55 @@ public sealed class JobExecutorTests
     }
 
     [Fact]
+    public async Task Progress_carries_the_finished_item_so_a_queue_can_mark_it()
+    {
+        var fs = new FakeFileSystem();
+        fs.AddFile("/pics/good.jpg", 1_000);
+        fs.AddFile("/pics/bad.jpg", 2_000);
+        var (plan, _) = PlanFrom(fs, Request("/pics"));
+        var codec = new FakeImageCodec(fs)
+        {
+            Behavior = request => request.SourcePath.EndsWith("bad.jpg", StringComparison.Ordinal)
+                ? new CodecResult { Success = false, ErrorMessage = "This file is corrupt." }
+                : new CodecResult { Success = true, OutputBytes = 500 },
+        };
+        var executor = new JobExecutor(fs, codec);
+
+        var reports = new List<ExecutionProgress>();
+        await executor.ExecuteAsync(
+            plan, Request("/pics"), new SynchronousProgress<ExecutionProgress>(reports.Add));
+
+        var byPath = reports
+            .Select(r => r.LastResult)
+            .OfType<ItemResult>()
+            .ToDictionary(r => r.SourcePath, StringComparer.Ordinal);
+
+        Assert.Equal(ItemOutcome.Success, byPath["/pics/good.jpg"].Outcome);
+        Assert.Equal(ItemOutcome.Failed, byPath["/pics/bad.jpg"].Outcome);
+        Assert.NotNull(byPath["/pics/bad.jpg"].ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Progress_accumulates_source_bytes_for_throughput_and_eta()
+    {
+        var fs = new FakeFileSystem();
+        fs.AddFile("/pics/a.jpg", 1_000);
+        fs.AddFile("/pics/b.jpg", 3_000);
+        var (plan, _) = PlanFrom(fs, Request("/pics"));
+        var executor = new JobExecutor(fs, new FakeImageCodec(fs));
+
+        var reports = new List<ExecutionProgress>();
+        await executor.ExecuteAsync(
+            plan, Request("/pics"), new SynchronousProgress<ExecutionProgress>(reports.Add));
+
+        // Reported from parallel workers, so the order the two land in is not
+        // fixed — but the last report has seen both files either way.
+        var final = reports.MaxBy(r => r.Completed)!;
+        Assert.Equal(4_000, final.CompletedSourceBytes);
+        Assert.All(reports, r => Assert.True(r.Elapsed >= TimeSpan.Zero));
+    }
+
+    [Fact]
     public async Task Pre_cancelled_token_stops_the_run_and_flags_cancellation()
     {
         var fs = new FakeFileSystem();
