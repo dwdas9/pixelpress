@@ -21,6 +21,16 @@ public enum WorkflowStage
     Summary,
 }
 
+/// <summary>Which rows the queue shows. Earns its keep after a run with
+/// failures, when the three bad files are buried among ninety-seven good
+/// ones.</summary>
+public enum QueueFilter
+{
+    All,
+    Optimized,
+    Failed,
+}
+
 /// <summary>
 /// View model for the main window. Owns the full workflow: input,
 /// planning, plan preview, execution, and the completion summary.
@@ -207,9 +217,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SkippedGroups));
         OnPropertyChanged(nameof(HasSkippedFiles));
         OnPropertyChanged(nameof(PlanItemRows));
+        OnPropertyChanged(nameof(VisibleQueueRows));
         OnPropertyChanged(nameof(HasMoreItems));
         OnPropertyChanged(nameof(MoreItemsNote));
         OnPropertyChanged(nameof(StatusBarText));
+        RaiseQueueCountsChanged();
+
+        // Not awaited: the queue is already on screen with its badges, and
+        // the pictures fill in behind it.
+        _ = LoadThumbnailsAsync();
 
         // Keep inspecting the same image across a re-plan; fall back to the
         // first one when it left the batch (or this is a fresh drop).
@@ -302,46 +318,161 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool HasSkippedFiles => CurrentPlan is { Skipped.Count: > 0 };
 
-    /// <summary>One row of the plan's file list. Carries the fields the
-    /// studio preview needs (source path, output format, the two byte
-    /// counts) alongside the display strings, so selecting a row is enough
-    /// to build a <see cref="PreviewRequest"/> without re-walking the plan.
-    /// Value equality matters: a re-plan rebuilds this list, and an
-    /// unchanged row compares equal so the current selection survives.</summary>
-    public sealed record PlanItemRow(
-        string SourcePath,
-        string FileName,
-        string FormatSummary,
-        string SizeText,
-        ImageFormatId OutputFormat,
-        long SourceBytes,
-        long EstimatedOutputBytes);
-
     private const int MaxFileRowsShown = 100;
+
+    /// <summary>Live rows, keyed by source path. Survives a re-plan so a
+    /// settled slider tick does not re-decode 100 thumbnails or wipe the
+    /// statuses of a finished run. Pruned when a file leaves the batch.</summary>
+    private readonly Dictionary<string, PlanItemRow> _rowCache = [];
 
     private IReadOnlyList<PlanItemRow> _planItemRows = [];
 
-    /// <summary>File list rows for the studio, capped at
-    /// <see cref="MaxFileRowsShown"/> so a 500-item batch renders
-    /// instantly (ItemsControl does not virtualize). Rebuilt once per
-    /// plan rather than recomputed per binding read.</summary>
+    /// <summary>Every row of the current plan, capped at
+    /// <see cref="MaxFileRowsShown"/> — the cap bounds the number of
+    /// thumbnails decoded, not the batch, which runs in full.</summary>
     public IReadOnlyList<PlanItemRow> PlanItemRows => _planItemRows;
 
-    private static List<PlanItemRow> BuildPlanItemRows(JobPlan? plan) => plan is null
-        ? []
-        : plan.Items
-            .Take(MaxFileRowsShown)
-            .Select(i => new PlanItemRow(
-                i.SourcePath,
-                Path.GetFileName(i.SourcePath),
-                i.SourceFormat == i.OutputFormat
-                    ? FormatRegistry.Get(i.SourceFormat).DisplayName
-                    : $"{FormatRegistry.Get(i.SourceFormat).DisplayName} → {FormatRegistry.Get(i.OutputFormat).DisplayName}",
-                FormatBytes(i.SourceBytes),
-                i.OutputFormat,
-                i.SourceBytes,
-                i.EstimatedOutputBytes))
-            .ToList();
+    /// <summary>The rows the queue actually shows, after
+    /// <see cref="SelectedQueueFilter"/>. Bound by the view.</summary>
+    public IReadOnlyList<PlanItemRow> VisibleQueueRows => SelectedQueueFilter switch
+    {
+        QueueFilter.Optimized => _planItemRows.Where(r => r.IsOptimized).ToList(),
+        QueueFilter.Failed => _planItemRows.Where(r => r.IsFailed).ToList(),
+        _ => _planItemRows,
+    };
+
+    [ObservableProperty]
+    private QueueFilter _selectedQueueFilter = QueueFilter.All;
+
+    partial void OnSelectedQueueFilterChanged(QueueFilter value) =>
+        OnPropertyChanged(nameof(VisibleQueueRows));
+
+    public int OptimizedCount => _planItemRows.Count(r => r.IsOptimized);
+
+    public int FailedItemCount => _planItemRows.Count(r => r.IsFailed);
+
+    public int SkippedCount => CurrentPlan?.Skipped.Count ?? 0;
+
+    private void RaiseQueueCountsChanged()
+    {
+        OnPropertyChanged(nameof(OptimizedCount));
+        OnPropertyChanged(nameof(FailedItemCount));
+        OnPropertyChanged(nameof(SkippedCount));
+    }
+
+    /// <summary>Rebuilds the row list for a new plan, reusing the existing row
+    /// object for any file that is still in the batch so its thumbnail and
+    /// status carry over. Only the planner-derived fields are rewritten.</summary>
+    private List<PlanItemRow> BuildPlanItemRows(JobPlan? plan)
+    {
+        if (plan is null)
+        {
+            DisposeRowCache();
+            return [];
+        }
+
+        var rows = new List<PlanItemRow>(Math.Min(plan.Items.Count, MaxFileRowsShown));
+
+        foreach (var item in plan.Items.Take(MaxFileRowsShown))
+        {
+            if (!_rowCache.TryGetValue(item.SourcePath, out var row))
+            {
+                row = new PlanItemRow(item.SourcePath);
+                _rowCache[item.SourcePath] = row;
+            }
+
+            row.FormatSummary = item.SourceFormat == item.OutputFormat
+                ? FormatRegistry.Get(item.SourceFormat).DisplayName
+                : $"{FormatRegistry.Get(item.SourceFormat).DisplayName} → {FormatRegistry.Get(item.OutputFormat).DisplayName}";
+            row.OutputFormatName = FormatRegistry.Get(item.OutputFormat).DisplayName;
+            row.SizeText = FormatBytes(item.SourceBytes);
+            row.OutputFormat = item.OutputFormat;
+            row.SourceBytes = item.SourceBytes;
+            row.EstimatedOutputBytes = item.EstimatedOutputBytes;
+
+            rows.Add(row);
+        }
+
+        // Files that left the batch take their thumbnails with them.
+        var live = rows.Select(r => r.SourcePath).ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in _rowCache.Keys.Where(k => !live.Contains(k)).ToList())
+        {
+            _rowCache[stale].Thumbnail?.Dispose();
+            _rowCache.Remove(stale);
+        }
+
+        return rows;
+    }
+
+    // --- Thumbnails -------------------------------------------------------
+
+    private const int ThumbnailWidthPixels = 64;
+
+    private CancellationTokenSource? _thumbnailCts;
+
+    /// <summary>Fills in thumbnails one at a time on a background thread,
+    /// publishing each as it lands so the queue populates progressively
+    /// rather than stalling on the whole batch. Rows that already have one
+    /// (carried over from the previous plan) are skipped, so this is a no-op
+    /// on a re-plan that changed nothing but the quality.</summary>
+    private async Task LoadThumbnailsAsync()
+    {
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        var cts = _thumbnailCts = new CancellationTokenSource();
+        var token = cts.Token;
+
+        foreach (var row in _planItemRows)
+        {
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (row.Thumbnail is not null)
+            {
+                continue;
+            }
+
+            var path = row.SourcePath;
+            var bitmap = await Task.Run(() => DecodeThumbnail(path), token);
+
+            if (token.IsCancellationRequested)
+            {
+                bitmap?.Dispose();
+                return;
+            }
+
+            row.Thumbnail = bitmap;
+        }
+    }
+
+    /// <summary>Decodes at thumbnail resolution rather than decoding full-size
+    /// and scaling down — a 6000×4000 source becomes 64px wide without ever
+    /// materialising 24M pixels. Returns null for formats no platform decoder
+    /// can read; the row shows a format badge instead.</summary>
+    private static Bitmap? DecodeThumbnail(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Bitmap.DecodeToWidth(stream, ThumbnailWidthPixels);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void DisposeRowCache()
+    {
+        foreach (var row in _rowCache.Values)
+        {
+            row.Thumbnail?.Dispose();
+        }
+
+        _rowCache.Clear();
+    }
 
     public bool HasMoreItems => ImageCount > MaxFileRowsShown;
 
@@ -635,6 +766,30 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ProgressPercent));
         OnPropertyChanged(nameof(ProgressLabel));
         OnPropertyChanged(nameof(StatusBarText));
+        OnPropertyChanged(nameof(ThroughputText));
+        OnPropertyChanged(nameof(EtaText));
+        OnPropertyChanged(nameof(HasRunMetrics));
+
+        // Mark the file that just finished. Rows past MaxFileRowsShown are not
+        // cached and simply miss — the batch still runs them, the queue just
+        // doesn't show them.
+        if (value?.LastResult is not { } result ||
+            !_rowCache.TryGetValue(result.SourcePath, out var row))
+        {
+            return;
+        }
+
+        row.Status = result.Outcome == ItemOutcome.Success
+            ? QueueItemStatus.Optimized
+            : QueueItemStatus.Failed;
+        row.ErrorMessage = result.ErrorMessage;
+
+        RaiseQueueCountsChanged();
+
+        if (SelectedQueueFilter != QueueFilter.All)
+        {
+            OnPropertyChanged(nameof(VisibleQueueRows));
+        }
     }
 
     public int ProgressPercent => RunProgress is null || RunProgress.Total == 0
@@ -644,6 +799,59 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public string ProgressLabel => RunProgress is null
         ? string.Empty
         : $"{RunProgress.Completed} of {RunProgress.Total} — {RunProgress.CurrentFileName}";
+
+    /// <summary>Bytes per second, measured over the whole run so far. Suppressed
+    /// for the first half-second: dividing by a near-zero elapsed time produces
+    /// a number in the gigabytes that is true, useless, and alarming.</summary>
+    private double? BytesPerSecond
+    {
+        get
+        {
+            if (RunProgress is not { CompletedSourceBytes: > 0 } p ||
+                p.Elapsed.TotalSeconds < 0.5)
+            {
+                return null;
+            }
+
+            return p.CompletedSourceBytes / p.Elapsed.TotalSeconds;
+        }
+    }
+
+    public bool HasRunMetrics => BytesPerSecond is not null;
+
+    public string ThroughputText =>
+        BytesPerSecond is { } rate ? $"{FormatBytes((long)rate)}/s" : string.Empty;
+
+    /// <summary>Estimated time remaining, extrapolated from bytes rather than
+    /// file count — a batch of one 40 MB raw and ninety-nine thumbnails is not
+    /// 1% done when the first file lands, and users watch the clock.</summary>
+    public string EtaText
+    {
+        get
+        {
+            if (BytesPerSecond is not { } rate ||
+                CurrentPlan is not { } plan ||
+                RunProgress is not { } p)
+            {
+                return string.Empty;
+            }
+
+            var remaining = plan.TotalSourceBytes - p.CompletedSourceBytes;
+            if (remaining <= 0)
+            {
+                return string.Empty;
+            }
+
+            return FormatDuration(TimeSpan.FromSeconds(remaining / rate));
+        }
+    }
+
+    private static string FormatDuration(TimeSpan span) => span switch
+    {
+        { TotalHours: >= 1 } => $"{(int)span.TotalHours}h {span.Minutes}m",
+        { TotalMinutes: >= 1 } => $"{span.Minutes}m {span.Seconds}s",
+        _ => $"{Math.Max(1, span.Seconds)}s",
+    };
 
     [ObservableProperty]
     private bool _isCancelling;
@@ -742,9 +950,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void StartOver()
     {
+        _thumbnailCts?.Cancel();
         _inputPaths = [];
         _currentRequest = null;
+        SelectedQueueFilter = QueueFilter.All;
+
+        // Setting this to null runs BuildPlanItemRows(null), which disposes
+        // every cached thumbnail.
         CurrentPlan = null;
+
         RunProgress = null;
         RunSummary = null;
         IsCancelling = false;
@@ -829,6 +1043,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // A re-run reuses the rows, so last run's ticks and crosses have to go
+        // before this run starts writing its own.
+        foreach (var row in _planItemRows)
+        {
+            row.Status = QueueItemStatus.Pending;
+            row.ErrorMessage = null;
+        }
+
+        SelectedQueueFilter = QueueFilter.All;
+        RaiseQueueCountsChanged();
+
         Stage = WorkflowStage.Running;
         IsCancelling = false;
         RunProgress = new ExecutionProgress { Completed = 0, Total = CurrentPlan.Items.Count, CurrentFileName = string.Empty };
@@ -912,7 +1137,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _runCts?.Dispose();
         _replanDebounceCts?.Dispose();
         _previewCts?.Dispose();
+        _thumbnailCts?.Dispose();
         OriginalPreviewImage?.Dispose();
         OutputPreviewImage?.Dispose();
+        DisposeRowCache();
     }
 }

@@ -35,6 +35,23 @@ public sealed record ExecutionProgress
     public required int Total { get; init; }
 
     public required string CurrentFileName { get; init; }
+
+    /// <summary>The item that just finished, so the caller can mark it in a
+    /// queue without waiting for the whole-run <see cref="ExecutionSummary"/>.
+    /// Null only for a synthetic "nothing has happened yet" report.</summary>
+    public ItemResult? LastResult { get; init; }
+
+    /// <summary>Source bytes belonging to the files finished so far, and the
+    /// wall-clock time they took. Together these give a throughput, and the
+    /// plan's remaining bytes give an ETA.
+    ///
+    /// Bytes rather than file count on purpose: a batch of one 40 MB raw and
+    /// ninety-nine 200 KB thumbnails is 1% complete by bytes and 1% complete
+    /// by count only by coincidence, and users watch the clock, not the
+    /// file index.</summary>
+    public long CompletedSourceBytes { get; init; }
+
+    public TimeSpan Elapsed { get; init; }
 }
 
 /// <summary>The complete outcome of a run: every item's result plus the

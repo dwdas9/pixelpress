@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
 using PixelPress.Core.Processing;
@@ -56,8 +57,10 @@ public sealed class JobExecutor
     {
         var results = new ConcurrentBag<ItemResult>();
         var completed = 0;
+        var completedBytes = 0L;
         var total = plan.Items.Count;
         var wasCancelled = false;
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -74,12 +77,21 @@ public sealed class JobExecutor
                     request.ResizeEnabled, request.ResizeMaxDimensionPixels);
                 results.Add(result);
 
+                // Both counters are bumped from several worker threads at once,
+                // so both go through Interlocked. They can still be read here
+                // slightly out of step with each other; that only ever perturbs
+                // a throughput figure by one file, which nobody can perceive.
                 var done = Interlocked.Increment(ref completed);
+                var doneBytes = Interlocked.Add(ref completedBytes, item.SourceBytes);
+
                 progress?.Report(new ExecutionProgress
                 {
                     Completed = done,
                     Total = total,
                     CurrentFileName = Path.GetFileName(item.SourcePath),
+                    LastResult = result,
+                    CompletedSourceBytes = doneBytes,
+                    Elapsed = stopwatch.Elapsed,
                 });
             });
         }

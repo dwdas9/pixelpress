@@ -45,5 +45,46 @@ a second slider to the plan-preview header; moving it re-estimates the
 whole-job size/%/bytes-saved live (debounced so a drag re-plans once it
 settles). Settings persist `Quality` instead of the preset.
 
-From M10 onward, each milestone close-out adds its own dated entry
-here, anchored to the commit(s) that shipped it.
+## M10 (2026-07-12, `d192e1e` + `220cfa1` + `a2d07c6` + close-out commit)
+
+The compression studio. Real per-image numbers arrive: `IPreviewEncoder`
+(ADR-0006 §4) encodes the selected image at the chosen quality into an
+in-memory buffer — a third, read-only concern that is neither planning
+(no pixels) nor execution (writes files) — and the view model drives it
+debounced, cancelling the in-flight encode on every change. The window
+becomes a two-pane studio: side-by-side `ORIGINAL`|`OPTIMIZED` panes
+with zoom and a filmstrip, a controls rail, and a statistics strip that
+keeps ADR-0006's separation visible on screen (`Exact — this image,
+encoded`, no tilde, against a `~`-prefixed batch estimate). Three latent
+crash paths in the fire-and-forget preview path were found and fixed
+while writing it: `Task.Run(fn, token)` faults rather than returns when
+a fast slider drag cancels before the pool picks the work up; bitmap
+swaps must publish-then-dispose because the renderer may still hold the
+old bitmap for the current frame; and `TryDecodeBitmap` catches
+`Exception`, since the platform decoder's failure type for AVIF/JXL/
+HEIC/RAW is not a contract we control.
+
+## M11 (2026-07-12, close-out commit)
+
+The workspace. The studio's two panes become a persistent three-column
+layout — queue | viewport | inspector, with a toolbar and status bar —
+and `WorkflowStage` stops swapping whole screens: the drop zone, the
+planning state and the completion summary are now overlays inside the
+viewport, so the inspector stays reachable at every stage and a finished
+batch can be re-tuned and re-run without back-navigation. The queue gains
+what M7 deferred as "needs engine per-item events": `ExecutionProgress`
+now carries the `ItemResult` it was already producing and discarding,
+plus `CompletedSourceBytes` and `Elapsed`, which gives per-file status
+ticks in the queue and a **byte-based** ETA and throughput in the status
+bar (a 40 MB raw among ninety-nine thumbnails is not "1% done" when the
+first file lands). `PlanItemRow` stops being a record and becomes a
+cached, mutable row keyed by source path — a re-plan fires on every
+settled slider tick and changes a file's *numbers*, never its identity,
+so rebuilding the rows would re-decode every thumbnail and forget every
+status on each nudge of the quality dial. Thumbnails decode via
+`Bitmap.DecodeToWidth`, so a 6000×4000 source never materialises 24M
+pixels; formats with no platform decoder keep a format badge for good.
+
+Shipped alongside the project's first real-world validation: ~5 GB of
+images reduced to ~500 MB (~90%) at acceptable quality. See
+`docs/ARCHITECTURE.md` for what that does and does not prove.
