@@ -70,14 +70,18 @@
             </MenuItem>
 
             <MenuItem Header="_View">
+                <!-- Key names must be Avalonia Key enum members, not the
+                     glyphs on the keycaps: OemPlus/OemMinus/D0, never
+                     Plus/Minus/0. KeyGesture.Parse throws at XAML load
+                     otherwise, taking the whole window down at startup. -->
                 <MenuItem Header="Zoom _In"
-                          InputGesture="Ctrl+Plus"
+                          InputGesture="Ctrl+OemPlus"
                           Command="{Binding ZoomInCommand}" />
                 <MenuItem Header="Zoom _Out"
-                          InputGesture="Ctrl+Minus"
+                          InputGesture="Ctrl+OemMinus"
                           Command="{Binding ZoomOutCommand}" />
                 <MenuItem Header="_Fit to Window"
-                          InputGesture="Ctrl+0"
+                          InputGesture="Ctrl+D0"
                           Command="{Binding ResetZoomCommand}" />
                 <Separator />
                 <MenuItem Header="Show _All Files"
