@@ -67,6 +67,16 @@ public sealed record PreviewResult
     /// <summary>True when resize actually shrank the image (output
     /// dimensions differ from source).</summary>
     public bool WasResized => OutputWidth != SourceWidth || OutputHeight != SourceHeight;
+
+    /// <summary>True when a real run would discard this encode and keep the
+    /// original, because it came out no smaller (see
+    /// <see cref="InflationGuard"/>). The preview must not show a saving the
+    /// executor is not going to deliver.</summary>
+    public bool WouldKeepOriginal { get; init; }
+
+    /// <summary>What the user will actually end up with: the encode's size
+    /// normally, the source's size when the original is kept.</summary>
+    public long EffectiveOutputBytes => WouldKeepOriginal ? SourceSizeBytes : OutputSizeBytes;
 }
 
 /// <summary>Factory for the default preview encoder, keeping the

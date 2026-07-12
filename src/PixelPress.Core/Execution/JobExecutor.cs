@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
 using PixelPress.Core.Processing;
@@ -56,8 +57,10 @@ public sealed class JobExecutor
     {
         var results = new ConcurrentBag<ItemResult>();
         var completed = 0;
+        var completedBytes = 0L;
         var total = plan.Items.Count;
         var wasCancelled = false;
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -74,12 +77,21 @@ public sealed class JobExecutor
                     request.ResizeEnabled, request.ResizeMaxDimensionPixels);
                 results.Add(result);
 
+                // Both counters are bumped from several worker threads at once,
+                // so both go through Interlocked. They can still be read here
+                // slightly out of step with each other; that only ever perturbs
+                // a throughput figure by one file, which nobody can perceive.
                 var done = Interlocked.Increment(ref completed);
+                var doneBytes = Interlocked.Add(ref completedBytes, item.SourceBytes);
+
                 progress?.Report(new ExecutionProgress
                 {
                     Completed = done,
                     Total = total,
                     CurrentFileName = Path.GetFileName(item.SourcePath),
+                    LastResult = result,
+                    CompletedSourceBytes = doneBytes,
+                    Elapsed = stopwatch.Elapsed,
                 });
             });
         }
@@ -132,6 +144,38 @@ public sealed class JobExecutor
                 return Failed(item, codecResult.ErrorMessage ?? "This file could not be processed.");
             }
 
+            // An optimizer must never hand back a bigger file. Re-encoding an
+            // already-compressed image at high quality routinely inflates it,
+            // so when the encode wins nothing, throw it away and keep the
+            // original.
+            if (InflationGuard.ShouldKeepOriginal(
+                    item.SourceFormat,
+                    item.OutputFormat,
+                    codecResult.WasResized,
+                    metadataPolicy,
+                    item.SourceBytes,
+                    codecResult.OutputBytes ?? long.MaxValue))
+            {
+                _fileSystem.DeleteFile(tempPath);
+
+                // In overwrite mode the original is already at the output path;
+                // there is nothing to do. Writing to a separate folder, it still
+                // has to get there, or the batch silently drops a file.
+                if (!PathsMatch(item.SourcePath, item.OutputPath))
+                {
+                    _fileSystem.CopyFile(item.SourcePath, item.OutputPath, overwrite: true);
+                }
+
+                return new ItemResult
+                {
+                    SourcePath = item.SourcePath,
+                    OutputPath = item.OutputPath,
+                    Outcome = ItemOutcome.KeptOriginal,
+                    SourceBytes = item.SourceBytes,
+                    OutputBytes = item.SourceBytes,
+                };
+            }
+
             _fileSystem.MoveFileAtomic(tempPath, item.OutputPath, overwrite: true);
 
             return new ItemResult
@@ -149,6 +193,12 @@ public sealed class JobExecutor
             return Failed(item, $"Could not write the output file: {ex.Message}");
         }
     }
+
+    private static bool PathsMatch(string a, string b) =>
+        string.Equals(
+            Path.GetFullPath(a),
+            Path.GetFullPath(b),
+            OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 
     private static ItemResult Failed(PlannedItem item, string message) => new()
     {

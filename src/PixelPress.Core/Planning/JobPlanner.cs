@@ -29,6 +29,38 @@ public sealed class JobPlanner(IFileSystem fileSystem)
         return new JobPlan { Items = items, Skipped = skipped };
     }
 
+    /// <summary>
+    /// Re-estimates an existing plan at a new quality, without re-planning it.
+    ///
+    /// Quality is the one setting that cannot change the *shape* of a plan: it
+    /// does not affect which files are in the batch, what format they become,
+    /// where they are written, or which names collide. It changes exactly one
+    /// number per item. So dragging the quality slider has no business
+    /// re-walking the file system, re-stat-ing every file and re-resolving
+    /// every naming conflict — which is what routing it through
+    /// <see cref="CreatePlan"/> did, and why the batch estimate felt too
+    /// expensive to keep live.
+    ///
+    /// Pure arithmetic over the existing items, no I/O. Every other setting
+    /// (target format, resize, metadata, output policy) genuinely can change
+    /// the plan's shape and still needs a full <see cref="CreatePlan"/>.
+    /// </summary>
+    public static JobPlan ReEstimate(JobPlan plan, int quality)
+    {
+        var items = plan.Items
+            .Select(item => item with
+            {
+                EstimatedOutputBytes = SizeEstimator.Estimate(
+                    item.SourceBytes,
+                    FormatRegistry.Get(item.SourceFormat),
+                    FormatRegistry.Get(item.OutputFormat),
+                    quality),
+            })
+            .ToList();
+
+        return plan with { Items = items };
+    }
+
     private static void Validate(JobRequest request)
     {
         if (request.InputPaths.Count == 0)

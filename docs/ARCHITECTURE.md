@@ -21,8 +21,10 @@ one is active right now and what's next inside it.
 | M7 | Premium UI | Done | Light/dark theming (theme dictionaries + `DynamicResource`), header + status bar structure, file table in the plan preview, empty-state copy, micro-transitions. Deferred: live per-file queue statuses (needs engine per-item events), vector logo (packaging milestone). |
 | M8 | Settings persistence + advanced panel | Done | Advanced panel in the plan preview: format override, resize to a max dimension (pixel-count cap, never upscales — independent of the quality system, ADR-0005), strip metadata, overwrite originals. All of it plus the quality choice persists as JSON in the OS app-data folder, loaded at startup, saved at shutdown. Size estimate deliberately ignores resize savings (no pixel work at plan time); the preview captions this. |
 | M9 | Lossy quality control | Done | Reverses ADR-0003 (see ADR-0006). `Quality` (1–100) is the single lossy dial through `JobRequest`/`CodecRequest`/`SizeEstimator`/codec (applied only to formats with `ImageFormat.HasQualityDial`); the three fixed presets are deleted. A live slider replaces the preset cards — on the drop screen and in the plan-preview header — and moving it re-estimates the batch totals live (debounced). |
-| M10 | Compression studio UI | In progress | Two-pane premium redesign: large preview area (side-by-side original\|output, zoom), controls rail (quality, format, resize, metadata, output; space reserved for a future lossy-codec section), and a compression-statistics strip. Real per-image output size + dimensions via a live preview encode behind a new `IPreviewEncoder` seam (ADR-0006 §4). |
-| M11 | Packaging | Not started | Self-contained publish for win-x64 / osx-arm64 / osx-x64, icon, final polish. |
+| M10 | Compression studio UI | Done | Two-pane premium redesign: large preview area (side-by-side original\|output, zoom), controls rail (quality, format, resize, metadata, output; space reserved for a future lossy-codec section), and a compression-statistics strip. Real per-image output size + dimensions via a live preview encode behind a new `IPreviewEncoder` seam (ADR-0006 §4). |
+| M11 | Workspace UI | Done | The studio's two panes become a persistent three-column workspace (queue \| viewport \| inspector) with a toolbar and status bar. Workflow stages become overlays *inside* the viewport rather than whole screens, so the inspector stays reachable at every stage and a finished batch can be re-run without back-navigation. Queue rows gain thumbnails and per-file status; `ExecutionProgress` gains `LastResult`/`CompletedSourceBytes`/`Elapsed`, giving byte-based ETA and throughput. |
+| M11a | Never-inflate + menus | Done | ADR-0007: an encode that comes out no smaller is discarded and the original kept (`InflationGuard`, shared by the executor and the preview). `SizeEstimator`'s quality curve steepens above 80 to match. Plus menu bar, queue/viewport context menus, mouse-wheel zoom, and the summary-text truncation fix. |
+| M12 | Packaging | Not started | Self-contained publish for win-x64 / osx-arm64 / osx-x64, icon, final polish. |
 
 ## Shape
 
@@ -81,10 +83,73 @@ Three distinct size concerns, deliberately kept separate:
 The batch estimate and the preview encode can disagree for one image;
 that is intended. The UI never conflates them.
 
-Studio layout (M10 target): a two-pane window — preview area (left) +
-controls rail (right) + a compression-statistics strip — sized so a
-future lossy-codec settings section drops into the rail without a
-re-layout.
+### The never-inflate rule (ADR-0007)
+
+**A run never produces a bigger file than it was given, for any file whose
+only requested change was compression.** When an encode comes out no
+smaller than the source, it is discarded and the original is kept
+(`ItemOutcome.KeptOriginal` — neither a success nor a failure).
+
+This is not defensive polish. Re-encoding an already-compressed image at
+high quality *legitimately* inflates it — the encoder spends bits
+preserving the previous encode's artifacts — and at the top of ADR-0006's
+quality dial that is the normal case. A real 615 MB batch came out at
+886 MB before this existed.
+
+`InflationGuard` is the single implementation, shared by `JobExecutor` and
+`MagickPreviewEncoder` so the preview cannot promise a saving the run will
+decline. It stands down whenever the user asked for something beyond
+smaller bytes — a format conversion, a resize that actually changed
+dimensions, or metadata stripping (a privacy request; never traded for
+bytes). See ADR-0007 for the full reasoning.
+
+### Validated result (2026-07-12)
+
+First real-world batch: **~5 GB of images → ~500 MB, a ~90% reduction at
+acceptable quality.** This is the end-to-end validation ADR-0006's lossy
+reversal was betting on, and it retires the standing "never run with a
+real batch" blocker.
+
+Two things it confirms, and one it does not:
+
+- The plan/execute split and the quality pipeline hold at real batch
+  size, not just on the single-image test path.
+- `SizeEstimator` is doing its job by being *conservative*. Real savings
+  landing well above the heuristic is the designed direction of error —
+  under-promising is safe, over-promising is not. Do not "correct" the
+  curve toward the observed 90% on one sample.
+- It does **not** validate quality at any particular slider position.
+  "Acceptable" was one operator's judgement on one corpus at whatever
+  quality that run used. It is not a guarantee, and nothing in the UI
+  should claim a fixed savings figure.
+
+**And a second run proved exactly why that last point matters:** at
+"Near-original" quality, a 615 MB batch came out at 886 MB. Same engine,
+same corpus shape, opposite result — the outcome is dominated by the
+quality setting, not by the app. That run is what produced ADR-0007. Read
+the 90% and the +44% together, or you will draw the wrong conclusion from
+either.
+
+### Workspace layout (M11)
+
+A persistent three-column workspace — queue (left) | viewport (centre) |
+inspector (right), with a toolbar above and a status bar below. Replaces
+M10's two-pane studio.
+
+The important change is that `WorkflowStage` no longer swaps whole
+screens: the drop zone, the planning state, and the completion summary
+are overlays *inside* the viewport, so the queue and inspector stay
+mounted at every stage. A finished batch can be re-tuned and re-run
+without navigating backwards.
+
+The inspector's `Expander` sections (Format / Quality / Resize /
+Metadata / Output) are where ADR-0006 §5's reserved per-codec section
+lands, without a re-layout.
+
+The comparison divider is deliberately **not** view-model state. It is a
+ratio measured against a control's bounds, means nothing to the planner
+or the encoder, and must not survive a re-plan; it lives in
+`MainWindow.axaml.cs`.
 
 ## Format capabilities
 

@@ -7,6 +7,7 @@ using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
 using PixelPress.Core.Processing;
 using PixelPress.Core.Settings;
+using PixelPress.Desktop.Infrastructure;
 
 namespace PixelPress.Desktop.ViewModels;
 
@@ -19,6 +20,16 @@ public enum WorkflowStage
     PlanReady,
     Running,
     Summary,
+}
+
+/// <summary>Which rows the queue shows. Earns its keep after a run with
+/// failures, when the three bad files are buried among ninety-seven good
+/// ones.</summary>
+public enum QueueFilter
+{
+    All,
+    Optimized,
+    Failed,
 }
 
 /// <summary>
@@ -68,11 +79,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnQualityChanged(int value)
     {
         OnPropertyChanged(nameof(QualityLabel));
-        // The slider fires this rapidly while dragging; debounce so we
-        // re-plan once the user settles rather than on every tick.
-        if (Stage == WorkflowStage.PlanReady)
+
+        if (CurrentPlan is not { } plan)
         {
-            _ = DebouncedReplanAsync();
+            return;
+        }
+
+        // Quality cannot change the plan's shape — only its numbers — so this
+        // is pure arithmetic with no file-system work, and can run on every
+        // slider tick. It used to route through a debounced full re-plan,
+        // which re-scanned the disk to recompute a multiplication, and left
+        // the batch estimate looking frozen.
+        LeaveSummaryOnSettingsChange();
+        CurrentPlan = JobPlanner.ReEstimate(plan, Quality);
+
+        // The preview encode is the expensive half, and it still debounces.
+        _ = DebouncedPreviewAsync();
+    }
+
+    /// <summary>Touching a setting while the completion summary is up means the
+    /// user is setting up another pass. Drop back to the plan so the batch is
+    /// runnable again — in the workspace layout the inspector is reachable at
+    /// every stage, so this is a normal thing to do, not an edge case.</summary>
+    private void LeaveSummaryOnSettingsChange()
+    {
+        if (Stage == WorkflowStage.Summary)
+        {
+            RunSummary = null;
+            RunProgress = null;
+            Stage = WorkflowStage.PlanReady;
         }
     }
 
@@ -97,24 +132,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private FormatOption _selectedTargetFormatOption;
 
-    partial void OnSelectedTargetFormatOptionChanged(FormatOption value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnSelectedTargetFormatOptionChanged(FormatOption value) => ReplanOnSettingChange();
 
     [ObservableProperty]
     private bool _stripMetadata;
 
-    partial void OnStripMetadataChanged(bool value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnStripMetadataChanged(bool value) => ReplanOnSettingChange();
 
     [ObservableProperty]
     private bool _overwriteOriginals;
@@ -122,10 +145,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnOverwriteOriginalsChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowOutputFolderControl));
-        if (Stage == WorkflowStage.PlanReady)
+        ReplanOnSettingChange();
+    }
+
+    /// <summary>Every setting except quality can change the plan's *shape* —
+    /// which format a file becomes, therefore its output path, therefore which
+    /// names collide — so these need a real re-plan, not a re-estimate.
+    ///
+    /// Gated on having inputs rather than on being in the PlanReady stage: the
+    /// workspace keeps the inspector reachable while the summary is up, and a
+    /// setting changed there must take effect rather than being silently
+    /// dropped.</summary>
+    private void ReplanOnSettingChange()
+    {
+        if (_inputPaths.Count == 0)
         {
-            _ = ReplanAsync();
+            return;
         }
+
+        LeaveSummaryOnSettingsChange();
+        _ = ReplanAsync(showPlanningState: false);
     }
 
     /// <summary>Hides the "Change output folder…" control once the user
@@ -136,24 +175,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _resizeEnabled;
 
-    partial void OnResizeEnabledChanged(bool value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnResizeEnabledChanged(bool value) => ReplanOnSettingChange();
 
     [ObservableProperty]
     private int _resizeMaxDimensionPixels = 2048;
 
-    partial void OnResizeMaxDimensionPixelsChanged(int value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnResizeMaxDimensionPixelsChanged(int value) => ReplanOnSettingChange();
 
     /// <summary>Snapshot of the controls rail's current values, saved on
     /// exit via <see cref="ISettingsStore"/>.</summary>
@@ -207,9 +234,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SkippedGroups));
         OnPropertyChanged(nameof(HasSkippedFiles));
         OnPropertyChanged(nameof(PlanItemRows));
+        OnPropertyChanged(nameof(VisibleQueueRows));
         OnPropertyChanged(nameof(HasMoreItems));
         OnPropertyChanged(nameof(MoreItemsNote));
         OnPropertyChanged(nameof(StatusBarText));
+        RaiseQueueCountsChanged();
+
+        // Not awaited: the queue is already on screen with its badges, and
+        // the pictures fill in behind it.
+        _ = LoadThumbnailsAsync();
 
         // Keep inspecting the same image across a re-plan; fall back to the
         // first one when it left the batch (or this is a fresh drop).
@@ -302,46 +335,167 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool HasSkippedFiles => CurrentPlan is { Skipped.Count: > 0 };
 
-    /// <summary>One row of the plan's file list. Carries the fields the
-    /// studio preview needs (source path, output format, the two byte
-    /// counts) alongside the display strings, so selecting a row is enough
-    /// to build a <see cref="PreviewRequest"/> without re-walking the plan.
-    /// Value equality matters: a re-plan rebuilds this list, and an
-    /// unchanged row compares equal so the current selection survives.</summary>
-    public sealed record PlanItemRow(
-        string SourcePath,
-        string FileName,
-        string FormatSummary,
-        string SizeText,
-        ImageFormatId OutputFormat,
-        long SourceBytes,
-        long EstimatedOutputBytes);
-
     private const int MaxFileRowsShown = 100;
+
+    /// <summary>Live rows, keyed by source path. Survives a re-plan so a
+    /// settled slider tick does not re-decode 100 thumbnails or wipe the
+    /// statuses of a finished run. Pruned when a file leaves the batch.</summary>
+    private readonly Dictionary<string, PlanItemRow> _rowCache = [];
 
     private IReadOnlyList<PlanItemRow> _planItemRows = [];
 
-    /// <summary>File list rows for the studio, capped at
-    /// <see cref="MaxFileRowsShown"/> so a 500-item batch renders
-    /// instantly (ItemsControl does not virtualize). Rebuilt once per
-    /// plan rather than recomputed per binding read.</summary>
+    /// <summary>Every row of the current plan, capped at
+    /// <see cref="MaxFileRowsShown"/> — the cap bounds the number of
+    /// thumbnails decoded, not the batch, which runs in full.</summary>
     public IReadOnlyList<PlanItemRow> PlanItemRows => _planItemRows;
 
-    private static List<PlanItemRow> BuildPlanItemRows(JobPlan? plan) => plan is null
-        ? []
-        : plan.Items
-            .Take(MaxFileRowsShown)
-            .Select(i => new PlanItemRow(
-                i.SourcePath,
-                Path.GetFileName(i.SourcePath),
-                i.SourceFormat == i.OutputFormat
-                    ? FormatRegistry.Get(i.SourceFormat).DisplayName
-                    : $"{FormatRegistry.Get(i.SourceFormat).DisplayName} → {FormatRegistry.Get(i.OutputFormat).DisplayName}",
-                FormatBytes(i.SourceBytes),
-                i.OutputFormat,
-                i.SourceBytes,
-                i.EstimatedOutputBytes))
-            .ToList();
+    /// <summary>The rows the queue actually shows, after
+    /// <see cref="SelectedQueueFilter"/>. Bound by the view.</summary>
+    public IReadOnlyList<PlanItemRow> VisibleQueueRows => SelectedQueueFilter switch
+    {
+        QueueFilter.Optimized => _planItemRows.Where(r => r.IsOptimized).ToList(),
+        QueueFilter.Failed => _planItemRows.Where(r => r.IsFailed).ToList(),
+        _ => _planItemRows,
+    };
+
+    [ObservableProperty]
+    private QueueFilter _selectedQueueFilter = QueueFilter.All;
+
+    partial void OnSelectedQueueFilterChanged(QueueFilter value) =>
+        OnPropertyChanged(nameof(VisibleQueueRows));
+
+    [RelayCommand]
+    private void ShowAllFiles() => SelectedQueueFilter = QueueFilter.All;
+
+    [RelayCommand]
+    private void ShowFailedFiles() => SelectedQueueFilter = QueueFilter.Failed;
+
+    public int OptimizedCount => _planItemRows.Count(r => r.IsOptimized);
+
+    public int FailedItemCount => _planItemRows.Count(r => r.IsFailed);
+
+    public int SkippedCount => CurrentPlan?.Skipped.Count ?? 0;
+
+    private void RaiseQueueCountsChanged()
+    {
+        OnPropertyChanged(nameof(OptimizedCount));
+        OnPropertyChanged(nameof(FailedItemCount));
+        OnPropertyChanged(nameof(SkippedCount));
+    }
+
+    /// <summary>Rebuilds the row list for a new plan, reusing the existing row
+    /// object for any file that is still in the batch so its thumbnail and
+    /// status carry over. Only the planner-derived fields are rewritten.</summary>
+    private List<PlanItemRow> BuildPlanItemRows(JobPlan? plan)
+    {
+        if (plan is null)
+        {
+            DisposeRowCache();
+            return [];
+        }
+
+        var rows = new List<PlanItemRow>(Math.Min(plan.Items.Count, MaxFileRowsShown));
+
+        foreach (var item in plan.Items.Take(MaxFileRowsShown))
+        {
+            if (!_rowCache.TryGetValue(item.SourcePath, out var row))
+            {
+                row = new PlanItemRow(item.SourcePath);
+                _rowCache[item.SourcePath] = row;
+            }
+
+            row.FormatSummary = item.SourceFormat == item.OutputFormat
+                ? FormatRegistry.Get(item.SourceFormat).DisplayName
+                : $"{FormatRegistry.Get(item.SourceFormat).DisplayName} → {FormatRegistry.Get(item.OutputFormat).DisplayName}";
+            row.OutputFormatName = FormatRegistry.Get(item.OutputFormat).DisplayName;
+            row.SizeText = FormatBytes(item.SourceBytes);
+            row.OutputFormat = item.OutputFormat;
+            row.SourceBytes = item.SourceBytes;
+            row.EstimatedOutputBytes = item.EstimatedOutputBytes;
+
+            rows.Add(row);
+        }
+
+        // Files that left the batch take their thumbnails with them.
+        var live = rows.Select(r => r.SourcePath).ToHashSet(StringComparer.Ordinal);
+        foreach (var stale in _rowCache.Keys.Where(k => !live.Contains(k)).ToList())
+        {
+            _rowCache[stale].Thumbnail?.Dispose();
+            _rowCache.Remove(stale);
+        }
+
+        return rows;
+    }
+
+    // --- Thumbnails -------------------------------------------------------
+
+    private const int ThumbnailWidthPixels = 64;
+
+    private CancellationTokenSource? _thumbnailCts;
+
+    /// <summary>Fills in thumbnails one at a time on a background thread,
+    /// publishing each as it lands so the queue populates progressively
+    /// rather than stalling on the whole batch. Rows that already have one
+    /// (carried over from the previous plan) are skipped, so this is a no-op
+    /// on a re-plan that changed nothing but the quality.</summary>
+    private async Task LoadThumbnailsAsync()
+    {
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        var cts = _thumbnailCts = new CancellationTokenSource();
+        var token = cts.Token;
+
+        foreach (var row in _planItemRows)
+        {
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (row.Thumbnail is not null)
+            {
+                continue;
+            }
+
+            var path = row.SourcePath;
+            var bitmap = await Task.Run(() => DecodeThumbnail(path), token);
+
+            if (token.IsCancellationRequested)
+            {
+                bitmap?.Dispose();
+                return;
+            }
+
+            row.Thumbnail = bitmap;
+        }
+    }
+
+    /// <summary>Decodes at thumbnail resolution rather than decoding full-size
+    /// and scaling down — a 6000×4000 source becomes 64px wide without ever
+    /// materialising 24M pixels. Returns null for formats no platform decoder
+    /// can read; the row shows a format badge instead.</summary>
+    private static Bitmap? DecodeThumbnail(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            return Bitmap.DecodeToWidth(stream, ThumbnailWidthPixels);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private void DisposeRowCache()
+    {
+        foreach (var row in _rowCache.Values)
+        {
+            row.Thumbnail?.Dispose();
+        }
+
+        _rowCache.Clear();
+    }
 
     public bool HasMoreItems => ImageCount > MaxFileRowsShown;
 
@@ -357,7 +511,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         WorkflowStage.PlanReady => $"{ImageCount} {(ImageCount == 1 ? "image" : "images")} queued",
         WorkflowStage.Running => RunProgress is { } p ? $"Optimizing {p.Completed} of {p.Total}…" : "Optimizing…",
         WorkflowStage.Summary => RunSummary is { } s
-            ? (s.WasCancelled ? "Stopped" : $"Done — {s.SucceededCount} optimized")
+            ? (s.WasCancelled ? "Stopped" : $"Done — {s.SucceededCount} optimized, {s.KeptOriginalCount} unchanged")
             : "Done",
         _ => string.Empty,
     };
@@ -393,6 +547,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedPlanItemChanged(PlanItemRow? value)
     {
+        RemoveSelectedCommand.NotifyCanExecuteChanged();
+        ShowSelectedInFolderCommand.NotifyCanExecuteChanged();
+
         if (_isApplyingPlan)
         {
             return;
@@ -457,8 +614,66 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public string ZoomLabel => $"{ZoomFactor * 100:0}%";
 
+    /// <summary>Bounds shared by the zoom slider, the menu, and the mouse
+    /// wheel, so all three agree on how far zoom can go.</summary>
+    public const double MinZoom = 0.25;
+
+    public const double MaxZoom = 4.0;
+
     [RelayCommand]
     private void ResetZoom() => ZoomFactor = 1.0;
+
+    /// <summary>Multiplicative steps, not additive: a fixed +0.25 crawls at 4×
+    /// and lurches at 0.25×, whereas a constant ratio feels the same at every
+    /// magnification. Same reason the mouse wheel uses a ratio.</summary>
+    [RelayCommand]
+    private void ZoomIn() => ZoomFactor = Math.Min(MaxZoom, ZoomFactor * 1.25);
+
+    [RelayCommand]
+    private void ZoomOut() => ZoomFactor = Math.Max(MinZoom, ZoomFactor / 1.25);
+
+    /// <summary>Nudges zoom by a wheel notch. Lives here rather than in the
+    /// code-behind so the wheel, the menu and the buttons cannot drift apart.</summary>
+    public void NudgeZoom(double delta)
+    {
+        var factor = delta > 0 ? 1.12 : 1 / 1.12;
+        ZoomFactor = Math.Clamp(ZoomFactor * factor, MinZoom, MaxZoom);
+    }
+
+    /// <summary>Drops the selected image from the batch. The plan is rebuilt
+    /// from the remaining sources, so every downstream number (totals, output
+    /// paths, rename conflicts) is recomputed rather than patched.</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task RemoveSelectedAsync()
+    {
+        if (SelectedPlanItem is not { } row)
+        {
+            return;
+        }
+
+        _excludedPaths.Add(row.SourcePath);
+        await ReplanAsync(showPlanningState: false);
+    }
+
+    private bool HasSelection => SelectedPlanItem is not null;
+
+    /// <summary>Sources the user has explicitly removed. Kept out of
+    /// <see cref="_inputPaths"/> rather than removed from it, because an input
+    /// path may be a *folder* — deleting one file cannot be expressed by
+    /// editing the folder list.</summary>
+    private readonly HashSet<string> _excludedPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void ShowSelectedInFolder()
+    {
+        if (SelectedPlanItem is { } row)
+        {
+            SystemFolders.RevealFile(row.SourcePath);
+        }
+    }
+
+    [RelayCommand]
+    private void OpenOutputFolder() => SystemFolders.OpenFolder(OutputDirectory);
 
     /// <summary>Encodes the selected image at the current settings and
     /// republishes the panes and statistics. Cancels any encode still in
@@ -569,12 +784,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             ? $"{FormatRegistry.Get(row.OutputFormat).DisplayName} previews aren't supported on this system — the numbers beside it are still exact."
             : null;
 
-        PreviewOutputSizeText = FormatBytes(result.OutputSizeBytes);
-        PreviewSavingsText = FormatSavings(result.SourceSizeBytes, result.OutputSizeBytes, approximate: false);
+        // EffectiveOutputBytes, not OutputSizeBytes: when the encode came out
+        // bigger the run will keep the original, and the preview must show the
+        // file the user will actually get rather than one we are about to throw
+        // away.
+        PreviewOutputSizeText = FormatBytes(result.EffectiveOutputBytes);
+        PreviewSavingsText = FormatSavings(
+            result.SourceSizeBytes, result.EffectiveOutputBytes, approximate: false);
         PreviewDimensionsText = result.WasResized
             ? $"{result.SourceWidth} × {result.SourceHeight}  →  {result.OutputWidth} × {result.OutputHeight}"
             : $"{result.OutputWidth} × {result.OutputHeight}";
-        PreviewAccuracyNote = "Exact — this image, encoded";
+        PreviewAccuracyNote = result.WouldKeepOriginal
+            ? "Exact — original kept, no gain here"
+            : "Exact — this image, encoded";
     }
 
     /// <summary>Swaps the "after" pane's bitmap, publishing the new one
@@ -635,6 +857,33 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ProgressPercent));
         OnPropertyChanged(nameof(ProgressLabel));
         OnPropertyChanged(nameof(StatusBarText));
+        OnPropertyChanged(nameof(ThroughputText));
+        OnPropertyChanged(nameof(EtaText));
+        OnPropertyChanged(nameof(HasRunMetrics));
+
+        // Mark the file that just finished. Rows past MaxFileRowsShown are not
+        // cached and simply miss — the batch still runs them, the queue just
+        // doesn't show them.
+        if (value?.LastResult is not { } result ||
+            !_rowCache.TryGetValue(result.SourcePath, out var row))
+        {
+            return;
+        }
+
+        row.Status = result.Outcome switch
+        {
+            ItemOutcome.Success => QueueItemStatus.Optimized,
+            ItemOutcome.KeptOriginal => QueueItemStatus.Unchanged,
+            _ => QueueItemStatus.Failed,
+        };
+        row.ErrorMessage = result.ErrorMessage;
+
+        RaiseQueueCountsChanged();
+
+        if (SelectedQueueFilter != QueueFilter.All)
+        {
+            OnPropertyChanged(nameof(VisibleQueueRows));
+        }
     }
 
     public int ProgressPercent => RunProgress is null || RunProgress.Total == 0
@@ -644,6 +893,59 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public string ProgressLabel => RunProgress is null
         ? string.Empty
         : $"{RunProgress.Completed} of {RunProgress.Total} — {RunProgress.CurrentFileName}";
+
+    /// <summary>Bytes per second, measured over the whole run so far. Suppressed
+    /// for the first half-second: dividing by a near-zero elapsed time produces
+    /// a number in the gigabytes that is true, useless, and alarming.</summary>
+    private double? BytesPerSecond
+    {
+        get
+        {
+            if (RunProgress is not { CompletedSourceBytes: > 0 } p ||
+                p.Elapsed.TotalSeconds < 0.5)
+            {
+                return null;
+            }
+
+            return p.CompletedSourceBytes / p.Elapsed.TotalSeconds;
+        }
+    }
+
+    public bool HasRunMetrics => BytesPerSecond is not null;
+
+    public string ThroughputText =>
+        BytesPerSecond is { } rate ? $"{FormatBytes((long)rate)}/s" : string.Empty;
+
+    /// <summary>Estimated time remaining, extrapolated from bytes rather than
+    /// file count — a batch of one 40 MB raw and ninety-nine thumbnails is not
+    /// 1% done when the first file lands, and users watch the clock.</summary>
+    public string EtaText
+    {
+        get
+        {
+            if (BytesPerSecond is not { } rate ||
+                CurrentPlan is not { } plan ||
+                RunProgress is not { } p)
+            {
+                return string.Empty;
+            }
+
+            var remaining = plan.TotalSourceBytes - p.CompletedSourceBytes;
+            if (remaining <= 0)
+            {
+                return string.Empty;
+            }
+
+            return FormatDuration(TimeSpan.FromSeconds(remaining / rate));
+        }
+    }
+
+    private static string FormatDuration(TimeSpan span) => span switch
+    {
+        { TotalHours: >= 1 } => $"{(int)span.TotalHours}h {span.Minutes}m",
+        { TotalMinutes: >= 1 } => $"{span.Minutes}m {span.Seconds}s",
+        _ => $"{Math.Max(1, span.Seconds)}s",
+    };
 
     [ObservableProperty]
     private bool _isCancelling;
@@ -669,6 +971,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SummaryOriginalSizeText));
         OnPropertyChanged(nameof(SummaryFinalSizeText));
         OnPropertyChanged(nameof(SummarySavings));
+        OnPropertyChanged(nameof(SummarySavingsNote));
+        OnPropertyChanged(nameof(HasSummarySavingsNote));
         OnPropertyChanged(nameof(HasFailures));
         OnPropertyChanged(nameof(FailureMessages));
     }
@@ -684,14 +988,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             if (summary.WasCancelled)
             {
-                return $"Stopped — {summary.SucceededCount} of {summary.TotalCount} optimized";
+                return $"Stopped — {summary.ProcessedCount} of {summary.TotalCount} processed";
             }
 
             return summary.FailedCount == 0
-                ? $"{summary.SucceededCount} {(summary.SucceededCount == 1 ? "image" : "images")} optimized"
-                : $"{summary.SucceededCount} of {summary.TotalCount} images optimized";
+                ? $"{summary.ProcessedCount} {(summary.ProcessedCount == 1 ? "image" : "images")} processed"
+                : $"{summary.ProcessedCount} of {summary.TotalCount} images processed";
         }
     }
+
+    /// <summary>The sentence that explains the headline number when it needs
+    /// explaining — chiefly "we left some files alone because re-encoding them
+    /// would have made them bigger", which would otherwise look like the app
+    /// had quietly done nothing.</summary>
+    public string SummarySavingsNote
+    {
+        get
+        {
+            if (RunSummary is not { KeptOriginalCount: > 0 } summary)
+            {
+                return string.Empty;
+            }
+
+            return summary.KeptOriginalCount == summary.ProcessedCount
+                ? "These images were already as small as this quality setting can make them, so the originals were kept. Lower the quality to compress them further."
+                : $"{summary.KeptOriginalCount} of them were already as small as this quality setting can make them, so the originals were kept.";
+        }
+    }
+
+    public bool HasSummarySavingsNote => !string.IsNullOrEmpty(SummarySavingsNote);
 
     public string SummaryOriginalSizeText =>
         RunSummary is null ? string.Empty : FormatBytes(RunSummary.TotalSourceBytes);
@@ -724,6 +1049,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         _inputPaths = paths;
+        _excludedPaths.Clear();
         OutputDirectory = ComputeDefaultOutputDirectory(paths);
         await ReplanAsync();
     }
@@ -742,9 +1068,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void StartOver()
     {
+        _thumbnailCts?.Cancel();
         _inputPaths = [];
         _currentRequest = null;
+        _excludedPaths.Clear();
+        SelectedQueueFilter = QueueFilter.All;
+
+        // Setting this to null runs BuildPlanItemRows(null), which disposes
+        // every cached thumbnail.
         CurrentPlan = null;
+
         RunProgress = null;
         RunSummary = null;
         IsCancelling = false;
@@ -752,12 +1085,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         Stage = WorkflowStage.AwaitingInput;
     }
 
-    /// <summary>Re-plans after a short quiet period, cancelling any
-    /// re-plan still pending from an earlier slider tick. Keeps the live
-    /// estimate responsive without re-scanning on every pixel of drag.
-    /// Unlike <see cref="ReplanAsync"/> it stays on the plan-ready screen
-    /// (no flash to the "reading files…" state) while settling.</summary>
-    private async Task DebouncedReplanAsync()
+    /// <summary>Refreshes the preview encode after a short quiet period,
+    /// cancelling any refresh still pending from an earlier slider tick.
+    ///
+    /// Only the preview is debounced now. The batch estimate rides along with
+    /// every tick because re-estimating is arithmetic; encoding a full-size
+    /// image is not, and doing that on every pixel of a drag would make the
+    /// slider stutter.</summary>
+    private async Task DebouncedPreviewAsync()
     {
         _replanDebounceCts?.Cancel();
         _replanDebounceCts?.Dispose();
@@ -772,10 +1107,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (_inputPaths.Count > 0)
-        {
-            await ReplanAsync(showPlanningState: false);
-        }
+        await RefreshPreviewAsync();
     }
 
     private async Task ReplanAsync(bool showPlanningState = true)
@@ -801,7 +1133,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 ResizeMaxDimensionPixels = ResizeMaxDimensionPixels,
             };
 
-            CurrentPlan = await Task.Run(() => _planner.CreatePlan(request));
+            var plan = await Task.Run(() => _planner.CreatePlan(request));
+
+            // Files the user removed are filtered out of the finished plan
+            // rather than out of the inputs, because an input path may be a
+            // folder — "drop this one file" is not expressible as an edit to
+            // the folder list. (A removed file's conflict-avoiding rename may
+            // linger on a sibling; cosmetic, and not worth a second planning
+            // pass to undo.)
+            if (_excludedPaths.Count > 0)
+            {
+                plan = plan with
+                {
+                    Items = plan.Items.Where(i => !_excludedPaths.Contains(i.SourcePath)).ToList(),
+                };
+            }
+
+            CurrentPlan = plan;
             _currentRequest = request;
             Stage = WorkflowStage.PlanReady;
 
@@ -828,6 +1176,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             return;
         }
+
+        // A re-run reuses the rows, so last run's ticks and crosses have to go
+        // before this run starts writing its own.
+        foreach (var row in _planItemRows)
+        {
+            row.Status = QueueItemStatus.Pending;
+            row.ErrorMessage = null;
+        }
+
+        SelectedQueueFilter = QueueFilter.All;
+        RaiseQueueCountsChanged();
 
         Stage = WorkflowStage.Running;
         IsCancelling = false;
@@ -883,6 +1242,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.#} {units[unitIndex]}";
     }
 
+    /// <summary>The headline savings figure, and nothing else. Deliberately
+    /// short: it renders at 36px, and the previous version returned whole
+    /// sentences ("roughly the same size (some formats need re-encoding)")
+    /// into that slot, which clipped. Explanations belong on their own line —
+    /// see <see cref="SummarySavingsNote"/>.</summary>
     /// <param name="approximate">False only for the live preview encode,
     /// whose bytes are measured rather than guessed. ADR-0006 requires the
     /// UI to keep the two apart, and the tilde is how it says so.</param>
@@ -893,14 +1257,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return string.Empty;
         }
 
-        var percent = 100.0 * (1.0 - (double)outputBytes / sourceBytes);
+        var percent = 100.0 * (1.0 - ((double)outputBytes / sourceBytes));
         var prefix = approximate ? "~" : string.Empty;
 
         return percent switch
         {
             >= 1 => $"{prefix}{percent:0}% smaller",
-            <= -1 => "roughly the same size (some formats need re-encoding)",
-            _ => "roughly the same size",
+            <= -1 => $"{prefix}{-percent:0}% larger",
+            _ => "No change",
         };
     }
 
@@ -912,7 +1276,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _runCts?.Dispose();
         _replanDebounceCts?.Dispose();
         _previewCts?.Dispose();
+        _thumbnailCts?.Dispose();
         OriginalPreviewImage?.Dispose();
         OutputPreviewImage?.Dispose();
+        DisposeRowCache();
     }
 }

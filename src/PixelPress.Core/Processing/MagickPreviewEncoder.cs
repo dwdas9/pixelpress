@@ -44,6 +44,19 @@ internal sealed class MagickPreviewEncoder : IPreviewEncoder
             image.Format = MagickFormatMap.ToMagickFormat(request.OutputFormat);
             var bytes = image.ToByteArray();
 
+            var sourceFormat = FormatRegistry.FromPath(request.SourcePath);
+            var wasResized = (int)image.Width != sourceWidth || (int)image.Height != sourceHeight;
+
+            // Same rule the executor applies, so the preview promises exactly
+            // what a run will do rather than a saving it will then decline.
+            var wouldKeepOriginal = sourceFormat is not null && InflationGuard.ShouldKeepOriginal(
+                sourceFormat.Id,
+                request.OutputFormat,
+                wasResized,
+                request.MetadataPolicy,
+                sourceSize,
+                bytes.LongLength);
+
             return new PreviewResult
             {
                 OutputImage = bytes,
@@ -53,6 +66,7 @@ internal sealed class MagickPreviewEncoder : IPreviewEncoder
                 SourceHeight = sourceHeight,
                 OutputWidth = (int)image.Width,
                 OutputHeight = (int)image.Height,
+                WouldKeepOriginal = wouldKeepOriginal,
             };
         }
         catch (Exception ex) when (ex is MagickException or IOException or UnauthorizedAccessException)

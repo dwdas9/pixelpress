@@ -14,6 +14,50 @@ public sealed class JobPlannerTests
     };
 
     [Fact]
+    public void ReEstimate_changes_the_numbers_without_re_reading_the_disk()
+    {
+        var fs = new FakeFileSystem();
+        fs.AddFile("/pics/a.jpg", 10_000);
+        fs.AddFile("/pics/b.png", 20_000);
+
+        var planner = new JobPlanner(fs);
+        var plan = planner.CreatePlan(Request("/pics") with { Quality = 80 });
+
+        var cheaper = JobPlanner.ReEstimate(plan, quality: 30);
+
+        // Lower quality must predict a smaller batch...
+        Assert.True(cheaper.TotalEstimatedOutputBytes < plan.TotalEstimatedOutputBytes);
+
+        // ...while changing nothing else about the plan. Quality cannot move a
+        // file, rename it, or alter its format — if this ever fails, the cheap
+        // re-estimate path is no longer safe and the caller must re-plan.
+        Assert.Equal(
+            plan.Items.Select(i => (i.SourcePath, i.OutputPath, i.OutputFormat, i.SourceBytes)),
+            cheaper.Items.Select(i => (i.SourcePath, i.OutputPath, i.OutputFormat, i.SourceBytes)));
+        Assert.Equal(plan.Skipped, cheaper.Skipped);
+    }
+
+    [Fact]
+    public void ReEstimate_agrees_with_a_full_replan_at_the_same_quality()
+    {
+        var fs = new FakeFileSystem();
+        fs.AddFile("/pics/a.jpg", 10_000);
+        fs.AddFile("/pics/b.png", 20_000);
+
+        var planner = new JobPlanner(fs);
+        var atEighty = planner.CreatePlan(Request("/pics") with { Quality = 80 });
+        var replannedAtThirty = planner.CreatePlan(Request("/pics") with { Quality = 30 });
+
+        var reEstimatedAtThirty = JobPlanner.ReEstimate(atEighty, quality: 30);
+
+        // The shortcut is only legitimate if it lands exactly where the long way
+        // round would have.
+        Assert.Equal(
+            replannedAtThirty.Items.Select(i => i.EstimatedOutputBytes),
+            reEstimatedAtThirty.Items.Select(i => i.EstimatedOutputBytes));
+    }
+
+    [Fact]
     public void Plans_a_single_file_into_the_output_folder()
     {
         var fs = new FakeFileSystem().AddFile("/pics/cat.jpg", 2_000);

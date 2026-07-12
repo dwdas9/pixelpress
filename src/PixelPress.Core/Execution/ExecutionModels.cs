@@ -4,7 +4,13 @@ namespace PixelPress.Core.Execution;
 public enum ItemOutcome
 {
     Success,
+
     Failed,
+
+    /// <summary>The encode worked, but came out no smaller than the source, so
+    /// the original was kept instead (see <see cref="Processing.InflationGuard"/>).
+    /// Not a failure — the file is fine, there was simply nothing to gain.</summary>
+    KeptOriginal,
 }
 
 /// <summary>The outcome of processing one planned item. Always produced —
@@ -35,6 +41,23 @@ public sealed record ExecutionProgress
     public required int Total { get; init; }
 
     public required string CurrentFileName { get; init; }
+
+    /// <summary>The item that just finished, so the caller can mark it in a
+    /// queue without waiting for the whole-run <see cref="ExecutionSummary"/>.
+    /// Null only for a synthetic "nothing has happened yet" report.</summary>
+    public ItemResult? LastResult { get; init; }
+
+    /// <summary>Source bytes belonging to the files finished so far, and the
+    /// wall-clock time they took. Together these give a throughput, and the
+    /// plan's remaining bytes give an ETA.
+    ///
+    /// Bytes rather than file count on purpose: a batch of one 40 MB raw and
+    /// ninety-nine 200 KB thumbnails is 1% complete by bytes and 1% complete
+    /// by count only by coincidence, and users watch the clock, not the
+    /// file index.</summary>
+    public long CompletedSourceBytes { get; init; }
+
+    public TimeSpan Elapsed { get; init; }
 }
 
 /// <summary>The complete outcome of a run: every item's result plus the
@@ -52,10 +75,20 @@ public sealed record ExecutionSummary
 
     public int FailedCount => Results.Count(r => r.Outcome == ItemOutcome.Failed);
 
+    /// <summary>Files already as small as we can make them, left untouched.</summary>
+    public int KeptOriginalCount => Results.Count(r => r.Outcome == ItemOutcome.KeptOriginal);
+
+    /// <summary>Everything that ended with a usable file in the output —
+    /// re-encoded or kept. The complement of <see cref="FailedCount"/>.</summary>
+    public int ProcessedCount => TotalCount - FailedCount;
+
     public long TotalSourceBytes => Results.Sum(r => r.SourceBytes);
 
+    /// <summary>Bytes actually sitting in the output. A kept original
+    /// contributes its own size — counting it as zero would report a saving
+    /// that did not happen.</summary>
     public long TotalOutputBytes => Results
-        .Where(r => r.Outcome == ItemOutcome.Success)
+        .Where(r => r.Outcome is ItemOutcome.Success or ItemOutcome.KeptOriginal)
         .Sum(r => r.OutputBytes ?? 0);
 
     public IReadOnlyList<ItemResult> Failures => Results

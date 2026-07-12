@@ -1,23 +1,29 @@
-using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using PixelPress.Core.Formats;
+using PixelPress.Desktop.Infrastructure;
 using PixelPress.Desktop.ViewModels;
 
 namespace PixelPress.Desktop.Views;
 
 /// <summary>
-/// Code-behind handles the parts of input acquisition that are
-/// inherently platform/UI concepts — drag-drop, native file and folder
-/// pickers — then hands plain local paths to the view model. Keeping
-/// this here (rather than behind an injected service) avoids an
-/// abstraction with only one implementation and one caller.
+/// Code-behind handles the parts of the workspace that are inherently
+/// view concepts and carry no engine state: drag-drop and the native
+/// file/folder pickers, the theme toggle, and the comparison divider.
+///
+/// The divider lives here rather than in the view model on purpose. Its
+/// position is measured in device pixels against a control's current
+/// bounds, means nothing to the planner or the encoder, and must not
+/// survive a re-plan — a view model property would make it look like
+/// part of the job.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -30,19 +36,245 @@ public sealed partial class MainWindow : Window
             .ToList(),
     };
 
+    /// <summary>Where the divider sits, as a fraction of the comparison
+    /// surface's width. Kept as a ratio rather than a pixel offset so it
+    /// holds its place when the window resizes, the zoom changes, or a
+    /// differently-shaped image is selected.</summary>
+    private double _dividerRatio = 0.5;
+
+    private bool _isDraggingDivider;
+
     public MainWindow()
     {
         InitializeComponent();
+
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
         AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
         AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
+
+        // The surface resizes whenever the window, the splitters, the zoom,
+        // or the selected image changes. Each of those invalidates the
+        // divider's pixel position while leaving its ratio correct, so one
+        // handler covers all four.
+        CompareHost.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == BoundsProperty)
+            {
+                LayoutDivider();
+            }
+        };
+
+        // Only the handle grabs the divider. Everything else on the surface is
+        // free for panning — the two gestures would otherwise fight, and
+        // panning is the one you use far more often once zoomed in.
+        DividerHandle.PointerPressed += OnDividerPressed;
+        DividerHandle.PointerMoved += OnDividerMoved;
+        DividerHandle.PointerReleased += OnDividerReleased;
+
+        CompareScroller.PointerPressed += OnPanPressed;
+        CompareScroller.PointerMoved += OnPanMoved;
+        CompareScroller.PointerReleased += OnPanReleased;
+
+        // A right-click must act on the row under the cursor, not on whatever
+        // was left-clicked last. ListBox does not select on right-press, so the
+        // selection is moved here — tunnelling, to land before the ContextMenu
+        // opens and reads the selection.
+        QueueList.AddHandler(PointerPressedEvent, OnQueuePointerPressed, RoutingStrategies.Tunnel);
     }
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
-    // Drag-over visual feedback: the dashed outline and inner surface
-    // pick up the accent while files hover, and revert on leave/drop.
+    // --- Viewport zoom -----------------------------------------------------
+
+    /// <summary>
+    /// Wheel over the preview zooms — with or without Ctrl, since both are
+    /// muscle memory depending on which app you came from.
+    ///
+    /// The zoom is anchored to the pointer: whatever pixel is under the cursor
+    /// stays under the cursor. Zooming about the pane's centre instead makes
+    /// the detail you were inspecting slide away exactly when you lean in,
+    /// which is the difference between an image viewer that feels right and
+    /// one that feels broken.
+    ///
+    /// Marked handled so the ScrollViewer does not also scroll.
+    /// </summary>
+    private void OnViewportWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (!ViewModel.HasPreview)
+        {
+            return;
+        }
+
+        // Content coordinates are unscaled (CompareHost sits inside the zoom
+        // transform), so this point survives the zoom change and can be used to
+        // work out where it must land afterwards.
+        var anchorInContent = e.GetPosition(CompareHost);
+        var anchorInViewport = e.GetPosition(CompareScroller);
+
+        ViewModel.NudgeZoom(e.Delta.Y);
+        var zoom = ViewModel.ZoomFactor;
+
+        // The new offset can only be clamped once layout has run with the new
+        // scale — Extent is stale until then.
+        Dispatcher.UIThread.Post(
+            () => SetScrollOffset(new Vector(
+                (anchorInContent.X * zoom) - anchorInViewport.X,
+                (anchorInContent.Y * zoom) - anchorInViewport.Y)),
+            DispatcherPriority.Loaded);
+
+        e.Handled = true;
+    }
+
+    // --- Pan ---------------------------------------------------------------
+
+    private bool _isPanning;
+    private Point _panStart;
+    private Vector _panOrigin;
+
+    private void OnPanPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(CompareScroller).Properties.IsLeftButtonPressed ||
+            !ViewModel.HasPreview)
+        {
+            return;
+        }
+
+        // The handle's own drag wins; it sits on top of the image.
+        if (e.Source is Control source &&
+            source.FindAncestorOfType<Border>(includeSelf: true) == DividerHandle)
+        {
+            return;
+        }
+
+        _isPanning = true;
+        _panStart = e.GetPosition(CompareScroller);
+        _panOrigin = CompareScroller.Offset;
+        CompareScroller.Cursor = new Cursor(StandardCursorType.SizeAll);
+        e.Pointer.Capture(CompareScroller);
+    }
+
+    private void OnPanMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isPanning)
+        {
+            return;
+        }
+
+        // Drag right → content moves right → the viewport moves left over it.
+        var current = e.GetPosition(CompareScroller);
+        SetScrollOffset(_panOrigin - (current - _panStart));
+    }
+
+    private void OnPanReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isPanning)
+        {
+            return;
+        }
+
+        _isPanning = false;
+        CompareScroller.Cursor = Cursor.Default;
+        e.Pointer.Capture(null);
+    }
+
+    /// <summary>Applies a scroll offset, clamped to what actually exists.
+    /// An unclamped offset leaves the ScrollViewer showing empty space past
+    /// the edge of the image.</summary>
+    private void SetScrollOffset(Vector offset)
+    {
+        var maxX = Math.Max(0, CompareScroller.Extent.Width - CompareScroller.Viewport.Width);
+        var maxY = Math.Max(0, CompareScroller.Extent.Height - CompareScroller.Viewport.Height);
+
+        CompareScroller.Offset = new Vector(
+            Math.Clamp(offset.X, 0, maxX),
+            Math.Clamp(offset.Y, 0, maxY));
+    }
+
+    private void OnQueuePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(QueueList);
+        if (!point.Properties.IsRightButtonPressed)
+        {
+            return;
+        }
+
+        if (e.Source is Control source &&
+            source.FindAncestorOfType<ListBoxItem>(includeSelf: true) is { DataContext: PlanItemRow row })
+        {
+            ViewModel.SelectedPlanItem = row;
+        }
+    }
+
+    // --- Comparison divider ----------------------------------------------
+
+    private void OnDividerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _isDraggingDivider = true;
+        e.Pointer.Capture(DividerHandle);
+
+        // Deliberately does *not* snap the divider to the press point: the grab
+        // should pick the divider up where it is, not shift it by the few pixels
+        // between the handle's centre and where the pointer landed on it.
+        e.Handled = true;
+    }
+
+    private void OnDividerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_isDraggingDivider)
+        {
+            SetDividerFromPointer(e);
+        }
+    }
+
+    private void OnDividerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        _isDraggingDivider = false;
+        e.Pointer.Capture(null);
+    }
+
+    /// <summary>Converts the pointer's position into a ratio. Coordinates are
+    /// taken relative to <c>CompareHost</c>, which sits inside the zoom's
+    /// LayoutTransformControl — so the transform is already unwound and the
+    /// divider tracks the pointer at any zoom level.</summary>
+    private void SetDividerFromPointer(PointerEventArgs e)
+    {
+        var width = CompareHost.Bounds.Width;
+        if (width <= 0)
+        {
+            return;
+        }
+
+        var x = e.GetPosition(CompareHost).X;
+        _dividerRatio = Math.Clamp(x / width, 0, 1);
+        LayoutDivider();
+    }
+
+    /// <summary>Publishes the ratio to the three controls that render it: the
+    /// clip band that reveals the optimized image, the divider line, and the
+    /// grab handle.</summary>
+    private void LayoutDivider()
+    {
+        var bounds = CompareHost.Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            return;
+        }
+
+        var x = bounds.Width * _dividerRatio;
+
+        AfterClip.Width = x;
+
+        Canvas.SetLeft(DividerLine, x - (DividerLine.Width / 2));
+
+        Canvas.SetLeft(DividerHandle, x - (DividerHandle.Width / 2));
+        Canvas.SetTop(DividerHandle, (bounds.Height - DividerHandle.Height) / 2);
+    }
+
+    // --- Drag and drop -----------------------------------------------------
+
+    // Drag-over feedback: the dashed outline and inner surface pick up the
+    // accent while files hover, and revert on leave/drop.
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
         if (e.Data.Contains(DataFormats.Files))
@@ -56,8 +288,8 @@ public sealed partial class MainWindow : Window
     private void SetDropZoneHighlight(bool active)
     {
         // Resolve brushes from the active theme variant so the reset is
-        // correct in both light and dark mode; hardcoded colors here
-        // would paint light-theme values onto a dark window.
+        // correct in both light and dark mode; hardcoded colors here would
+        // paint light-theme values onto a dark window.
         var outlineBrush = FindThemeBrush(active ? "AccentBrush" : "HairlineBrush");
         var innerBrush = active ? FindThemeBrush("AccentSoftBrush") : Brushes.Transparent;
 
@@ -108,9 +340,8 @@ public sealed partial class MainWindow : Window
 
     private async void OnDropZonePressed(object? sender, PointerPressedEventArgs e)
     {
-        // Buttons inside the drop zone handle their own clicks; only open
-        // the picker when the press landed on the zone itself, otherwise
-        // a button click would open two dialogs.
+        // The "Choose files…" button inside the zone handles its own click;
+        // without this guard the press would bubble and open two dialogs.
         if (e.Source is Control source &&
             source.FindAncestorOfType<Button>(includeSelf: true) is not null)
         {
@@ -120,7 +351,9 @@ public sealed partial class MainWindow : Window
         await OpenFilePickerAsync();
     }
 
-    private async void OnDropZonePressedButton(object? sender, RoutedEventArgs e) =>
+    // --- Input acquisition -------------------------------------------------
+
+    private async void OnAddFilesClick(object? sender, RoutedEventArgs e) =>
         await OpenFilePickerAsync();
 
     private async Task OpenFilePickerAsync()
@@ -139,23 +372,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnToggleThemeClick(object? sender, RoutedEventArgs e)
-    {
-        if (Application.Current is not { } app)
-        {
-            return;
-        }
-
-        var goingDark = app.ActualThemeVariant != ThemeVariant.Dark;
-        app.RequestedThemeVariant = goingDark ? ThemeVariant.Dark : ThemeVariant.Light;
-
-        if (this.FindControl<Button>("ThemeToggle") is { } toggle)
-        {
-            toggle.Content = goingDark ? "☀️  Light" : "🌙  Dark";
-        }
-    }
-
-    private async void OnBrowseFolderClick(object? sender, RoutedEventArgs e)
+    private async void OnAddFolderClick(object? sender, RoutedEventArgs e)
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
@@ -185,38 +402,71 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnOpenOutputFolderClick(object? sender, RoutedEventArgs e)
+    // --- Shell -------------------------------------------------------------
+
+    private void OnToggleThemeClick(object? sender, RoutedEventArgs e)
     {
-        var path = ViewModel.OutputDirectory;
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+        if (Application.Current is not { } app)
         {
             return;
         }
 
-        // No cross-platform "open in file manager" API exists in .NET;
-        // each OS has its own launcher for this. Errors here (e.g. no
-        // file manager available in a stripped-down environment) are
-        // deliberately swallowed — failing to open a convenience shortcut
-        // should never surface as an error to the user.
-        try
+        var goingDark = app.ActualThemeVariant != ThemeVariant.Dark;
+        app.RequestedThemeVariant = goingDark ? ThemeVariant.Dark : ThemeVariant.Light;
+
+        ThemeToggle.Content = goingDark ? "☀️  Light" : "🌙  Dark";
+    }
+
+    private void OnOpenOutputFolderClick(object? sender, RoutedEventArgs e) =>
+        SystemFolders.OpenFolder(ViewModel.OutputDirectory);
+
+    private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
+
+    /// <summary>Help → Supported Formats. Answers the one question the format
+    /// registry can answer authoritatively, from the registry itself rather
+    /// than a hand-maintained list that would drift out of date.</summary>
+    private async void OnSupportedFormatsClick(object? sender, RoutedEventArgs e)
+    {
+        var decodable = FormatRegistry.All.Where(f => f.CanDecode).Select(f => f.DisplayName);
+        var encodable = FormatRegistry.EncodableFormats.Select(f => f.DisplayName);
+
+        var dialog = new Window
         {
-            if (OperatingSystem.IsWindows())
+            Title = "Supported formats",
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
-            }
-            else if (OperatingSystem.IsMacOS())
-            {
-                Process.Start("open", path);
-            }
-            else if (OperatingSystem.IsLinux())
-            {
-                Process.Start("xdg-open", path);
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // Swallowed deliberately; see comment above.
-        }
+                Margin = new Thickness(20),
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Can open:",
+                        FontWeight = FontWeight.SemiBold,
+                    },
+                    new TextBlock
+                    {
+                        Text = string.Join(", ", decodable),
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new TextBlock
+                    {
+                        Text = "Can save as:",
+                        FontWeight = FontWeight.SemiBold,
+                    },
+                    new TextBlock
+                    {
+                        Text = string.Join(", ", encodable),
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                },
+            },
+        };
+
+        await dialog.ShowDialog(this);
     }
 
     private static List<string> ToLocalPaths(IEnumerable<IStorageItem> items) =>

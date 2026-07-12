@@ -74,6 +74,18 @@ public sealed class FakeFileSystem : IFileSystem
         _files[dest] = bytes;
     }
 
+    public void CopyFile(string sourcePath, string destinationPath, bool overwrite)
+    {
+        var source = Normalize(sourcePath);
+
+        if (!_files.TryGetValue(source, out var bytes))
+        {
+            throw new IOException($"Source file not found: {sourcePath}");
+        }
+
+        _files[Normalize(destinationPath)] = bytes;
+    }
+
     public void DeleteFile(string path) => _files.TryRemove(Normalize(path), out _);
 
     /// <summary>Test-only introspection: every path currently "on disk".
