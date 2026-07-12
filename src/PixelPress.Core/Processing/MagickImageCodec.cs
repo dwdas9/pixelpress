@@ -43,13 +43,18 @@ internal sealed class MagickImageCodec : IImageCodec
     {
         using var image = new MagickImage(request.SourcePath);
 
+        var sourceWidth = image.Width;
+        var sourceHeight = image.Height;
+
         ApplyMetadataPolicy(image, request.MetadataPolicy);
         ApplyResize(image, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
         ApplyQuality(image, request.OutputFormat, request.Quality);
         image.Format = MagickFormatMap.ToMagickFormat(request.OutputFormat);
         image.Write(request.DestinationPath);
 
-        return Success(request.DestinationPath);
+        var wasResized = image.Width != sourceWidth || image.Height != sourceHeight;
+
+        return Success(request.DestinationPath, wasResized);
     }
 
     private static CodecResult TranscodeAnimated(CodecRequest request)
@@ -65,17 +70,26 @@ internal sealed class MagickImageCodec : IImageCodec
             // choice here — not the silent frame-1-by-accident bug this
             // method exists to avoid.
             using var firstFrame = (MagickImage)collection[0].Clone();
+            var frameWidth = firstFrame.Width;
+            var frameHeight = firstFrame.Height;
+
             ApplyMetadataPolicy(firstFrame, request.MetadataPolicy);
             ApplyResize(firstFrame, request.ResizeEnabled, request.ResizeMaxDimensionPixels);
             ApplyQuality(firstFrame, request.OutputFormat, request.Quality);
             firstFrame.Format = MagickFormatMap.ToMagickFormat(request.OutputFormat);
             firstFrame.Write(request.DestinationPath);
-            return Success(request.DestinationPath);
+
+            var frameResized = firstFrame.Width != frameWidth || firstFrame.Height != frameHeight;
+
+            return Success(request.DestinationPath, frameResized);
         }
 
         // Normalizes per-frame disposal/offset so every frame can be
         // re-encoded independently without accumulating artifacts.
         collection.Coalesce();
+
+        var firstWidth = collection[0].Width;
+        var firstHeight = collection[0].Height;
 
         foreach (var frame in collection)
         {
@@ -87,7 +101,9 @@ internal sealed class MagickImageCodec : IImageCodec
 
         collection.Write(request.DestinationPath);
 
-        return Success(request.DestinationPath);
+        var anyResized = collection[0].Width != firstWidth || collection[0].Height != firstHeight;
+
+        return Success(request.DestinationPath, anyResized);
     }
 
     private static void ApplyMetadataPolicy(IMagickImage<byte> image, MetadataPolicy policy)
@@ -126,8 +142,13 @@ internal sealed class MagickImageCodec : IImageCodec
         // ARCHITECTURE.md M4 notes. Default compression is used for now.
     }
 
-    private static CodecResult Success(string path) =>
-        new() { Success = true, OutputBytes = new FileInfo(path).Length };
+    private static CodecResult Success(string path, bool wasResized) =>
+        new()
+        {
+            Success = true,
+            OutputBytes = new FileInfo(path).Length,
+            WasResized = wasResized,
+        };
 
     private static CodecResult Failure(string message) =>
         new() { Success = false, ErrorMessage = message };

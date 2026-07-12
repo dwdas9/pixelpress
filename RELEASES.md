@@ -88,3 +88,29 @@ pixels; formats with no platform decoder keep a format badge for good.
 Shipped alongside the project's first real-world validation: ~5 GB of
 images reduced to ~500 MB (~90%) at acceptable quality. See
 `docs/ARCHITECTURE.md` for what that does and does not prove.
+
+## M11a (2026-07-12, close-out commit)
+
+**The never-inflate rule (ADR-0007), and the bug that forced it.** A real
+batch at "Near-original" quality turned 615 MB of JPEGs into 886 MB while
+the summary reported "99 images optimized". Not a codec defect —
+re-encoding an already-compressed image at high quality genuinely produces
+a larger file, because the encoder spends bits preserving the previous
+encode's artifacts. The defect was that nothing ever compared the output
+against the source. `InflationGuard` now discards any encode that came out
+no smaller and keeps the original (`ItemOutcome.KeptOriginal`: not a
+success, not a failure, reported honestly in the queue and the summary).
+It deliberately stands down when the user asked for more than smaller
+bytes — a format conversion, a resize that actually changed dimensions, or
+metadata stripping, which is a privacy request and is never traded for
+bytes. The executor and the preview encoder share the one implementation,
+so the preview cannot promise a saving the run will decline, and
+`SizeEstimator`'s quality curve steepens above 80 because output size does
+not rise linearly with the dial.
+
+Alongside it: mouse-wheel zoom over the viewport (multiplicative steps, so
+it feels the same at 0.25× and 4×), a menu bar and queue/viewport context
+menus wired to real commands only, remove-from-queue, reveal-in-file-
+manager, and a fix for the clipped summary label — which was clipped
+because `FormatSavings` returned whole sentences into a 36px stat slot, so
+the stat now returns a figure and the sentence gets its own line.

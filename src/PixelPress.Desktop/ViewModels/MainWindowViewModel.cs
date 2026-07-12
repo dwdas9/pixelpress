@@ -7,6 +7,7 @@ using PixelPress.Core.Jobs;
 using PixelPress.Core.Planning;
 using PixelPress.Core.Processing;
 using PixelPress.Core.Settings;
+using PixelPress.Desktop.Infrastructure;
 
 namespace PixelPress.Desktop.ViewModels;
 
@@ -347,6 +348,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnSelectedQueueFilterChanged(QueueFilter value) =>
         OnPropertyChanged(nameof(VisibleQueueRows));
 
+    [RelayCommand]
+    private void ShowAllFiles() => SelectedQueueFilter = QueueFilter.All;
+
+    [RelayCommand]
+    private void ShowFailedFiles() => SelectedQueueFilter = QueueFilter.Failed;
+
     public int OptimizedCount => _planItemRows.Count(r => r.IsOptimized);
 
     public int FailedItemCount => _planItemRows.Count(r => r.IsFailed);
@@ -488,7 +495,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         WorkflowStage.PlanReady => $"{ImageCount} {(ImageCount == 1 ? "image" : "images")} queued",
         WorkflowStage.Running => RunProgress is { } p ? $"Optimizing {p.Completed} of {p.Total}…" : "Optimizing…",
         WorkflowStage.Summary => RunSummary is { } s
-            ? (s.WasCancelled ? "Stopped" : $"Done — {s.SucceededCount} optimized")
+            ? (s.WasCancelled ? "Stopped" : $"Done — {s.SucceededCount} optimized, {s.KeptOriginalCount} unchanged")
             : "Done",
         _ => string.Empty,
     };
@@ -524,6 +531,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedPlanItemChanged(PlanItemRow? value)
     {
+        RemoveSelectedCommand.NotifyCanExecuteChanged();
+        ShowSelectedInFolderCommand.NotifyCanExecuteChanged();
+
         if (_isApplyingPlan)
         {
             return;
@@ -588,8 +598,66 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public string ZoomLabel => $"{ZoomFactor * 100:0}%";
 
+    /// <summary>Bounds shared by the zoom slider, the menu, and the mouse
+    /// wheel, so all three agree on how far zoom can go.</summary>
+    public const double MinZoom = 0.25;
+
+    public const double MaxZoom = 4.0;
+
     [RelayCommand]
     private void ResetZoom() => ZoomFactor = 1.0;
+
+    /// <summary>Multiplicative steps, not additive: a fixed +0.25 crawls at 4×
+    /// and lurches at 0.25×, whereas a constant ratio feels the same at every
+    /// magnification. Same reason the mouse wheel uses a ratio.</summary>
+    [RelayCommand]
+    private void ZoomIn() => ZoomFactor = Math.Min(MaxZoom, ZoomFactor * 1.25);
+
+    [RelayCommand]
+    private void ZoomOut() => ZoomFactor = Math.Max(MinZoom, ZoomFactor / 1.25);
+
+    /// <summary>Nudges zoom by a wheel notch. Lives here rather than in the
+    /// code-behind so the wheel, the menu and the buttons cannot drift apart.</summary>
+    public void NudgeZoom(double delta)
+    {
+        var factor = delta > 0 ? 1.12 : 1 / 1.12;
+        ZoomFactor = Math.Clamp(ZoomFactor * factor, MinZoom, MaxZoom);
+    }
+
+    /// <summary>Drops the selected image from the batch. The plan is rebuilt
+    /// from the remaining sources, so every downstream number (totals, output
+    /// paths, rename conflicts) is recomputed rather than patched.</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private async Task RemoveSelectedAsync()
+    {
+        if (SelectedPlanItem is not { } row)
+        {
+            return;
+        }
+
+        _excludedPaths.Add(row.SourcePath);
+        await ReplanAsync(showPlanningState: false);
+    }
+
+    private bool HasSelection => SelectedPlanItem is not null;
+
+    /// <summary>Sources the user has explicitly removed. Kept out of
+    /// <see cref="_inputPaths"/> rather than removed from it, because an input
+    /// path may be a *folder* — deleting one file cannot be expressed by
+    /// editing the folder list.</summary>
+    private readonly HashSet<string> _excludedPaths = new(StringComparer.OrdinalIgnoreCase);
+
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void ShowSelectedInFolder()
+    {
+        if (SelectedPlanItem is { } row)
+        {
+            SystemFolders.RevealFile(row.SourcePath);
+        }
+    }
+
+    [RelayCommand]
+    private void OpenOutputFolder() => SystemFolders.OpenFolder(OutputDirectory);
 
     /// <summary>Encodes the selected image at the current settings and
     /// republishes the panes and statistics. Cancels any encode still in
@@ -700,12 +768,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             ? $"{FormatRegistry.Get(row.OutputFormat).DisplayName} previews aren't supported on this system — the numbers beside it are still exact."
             : null;
 
-        PreviewOutputSizeText = FormatBytes(result.OutputSizeBytes);
-        PreviewSavingsText = FormatSavings(result.SourceSizeBytes, result.OutputSizeBytes, approximate: false);
+        // EffectiveOutputBytes, not OutputSizeBytes: when the encode came out
+        // bigger the run will keep the original, and the preview must show the
+        // file the user will actually get rather than one we are about to throw
+        // away.
+        PreviewOutputSizeText = FormatBytes(result.EffectiveOutputBytes);
+        PreviewSavingsText = FormatSavings(
+            result.SourceSizeBytes, result.EffectiveOutputBytes, approximate: false);
         PreviewDimensionsText = result.WasResized
             ? $"{result.SourceWidth} × {result.SourceHeight}  →  {result.OutputWidth} × {result.OutputHeight}"
             : $"{result.OutputWidth} × {result.OutputHeight}";
-        PreviewAccuracyNote = "Exact — this image, encoded";
+        PreviewAccuracyNote = result.WouldKeepOriginal
+            ? "Exact — original kept, no gain here"
+            : "Exact — this image, encoded";
     }
 
     /// <summary>Swaps the "after" pane's bitmap, publishing the new one
@@ -779,9 +854,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        row.Status = result.Outcome == ItemOutcome.Success
-            ? QueueItemStatus.Optimized
-            : QueueItemStatus.Failed;
+        row.Status = result.Outcome switch
+        {
+            ItemOutcome.Success => QueueItemStatus.Optimized,
+            ItemOutcome.KeptOriginal => QueueItemStatus.Unchanged,
+            _ => QueueItemStatus.Failed,
+        };
         row.ErrorMessage = result.ErrorMessage;
 
         RaiseQueueCountsChanged();
@@ -877,6 +955,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SummaryOriginalSizeText));
         OnPropertyChanged(nameof(SummaryFinalSizeText));
         OnPropertyChanged(nameof(SummarySavings));
+        OnPropertyChanged(nameof(SummarySavingsNote));
+        OnPropertyChanged(nameof(HasSummarySavingsNote));
         OnPropertyChanged(nameof(HasFailures));
         OnPropertyChanged(nameof(FailureMessages));
     }
@@ -892,14 +972,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             if (summary.WasCancelled)
             {
-                return $"Stopped — {summary.SucceededCount} of {summary.TotalCount} optimized";
+                return $"Stopped — {summary.ProcessedCount} of {summary.TotalCount} processed";
             }
 
             return summary.FailedCount == 0
-                ? $"{summary.SucceededCount} {(summary.SucceededCount == 1 ? "image" : "images")} optimized"
-                : $"{summary.SucceededCount} of {summary.TotalCount} images optimized";
+                ? $"{summary.ProcessedCount} {(summary.ProcessedCount == 1 ? "image" : "images")} processed"
+                : $"{summary.ProcessedCount} of {summary.TotalCount} images processed";
         }
     }
+
+    /// <summary>The sentence that explains the headline number when it needs
+    /// explaining — chiefly "we left some files alone because re-encoding them
+    /// would have made them bigger", which would otherwise look like the app
+    /// had quietly done nothing.</summary>
+    public string SummarySavingsNote
+    {
+        get
+        {
+            if (RunSummary is not { KeptOriginalCount: > 0 } summary)
+            {
+                return string.Empty;
+            }
+
+            return summary.KeptOriginalCount == summary.ProcessedCount
+                ? "These images were already as small as this quality setting can make them, so the originals were kept. Lower the quality to compress them further."
+                : $"{summary.KeptOriginalCount} of them were already as small as this quality setting can make them, so the originals were kept.";
+        }
+    }
+
+    public bool HasSummarySavingsNote => !string.IsNullOrEmpty(SummarySavingsNote);
 
     public string SummaryOriginalSizeText =>
         RunSummary is null ? string.Empty : FormatBytes(RunSummary.TotalSourceBytes);
@@ -932,6 +1033,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         _inputPaths = paths;
+        _excludedPaths.Clear();
         OutputDirectory = ComputeDefaultOutputDirectory(paths);
         await ReplanAsync();
     }
@@ -953,6 +1055,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _thumbnailCts?.Cancel();
         _inputPaths = [];
         _currentRequest = null;
+        _excludedPaths.Clear();
         SelectedQueueFilter = QueueFilter.All;
 
         // Setting this to null runs BuildPlanItemRows(null), which disposes
@@ -1015,7 +1118,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 ResizeMaxDimensionPixels = ResizeMaxDimensionPixels,
             };
 
-            CurrentPlan = await Task.Run(() => _planner.CreatePlan(request));
+            var plan = await Task.Run(() => _planner.CreatePlan(request));
+
+            // Files the user removed are filtered out of the finished plan
+            // rather than out of the inputs, because an input path may be a
+            // folder — "drop this one file" is not expressible as an edit to
+            // the folder list. (A removed file's conflict-avoiding rename may
+            // linger on a sibling; cosmetic, and not worth a second planning
+            // pass to undo.)
+            if (_excludedPaths.Count > 0)
+            {
+                plan = plan with
+                {
+                    Items = plan.Items.Where(i => !_excludedPaths.Contains(i.SourcePath)).ToList(),
+                };
+            }
+
+            CurrentPlan = plan;
             _currentRequest = request;
             Stage = WorkflowStage.PlanReady;
 
@@ -1108,6 +1227,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.#} {units[unitIndex]}";
     }
 
+    /// <summary>The headline savings figure, and nothing else. Deliberately
+    /// short: it renders at 36px, and the previous version returned whole
+    /// sentences ("roughly the same size (some formats need re-encoding)")
+    /// into that slot, which clipped. Explanations belong on their own line —
+    /// see <see cref="SummarySavingsNote"/>.</summary>
     /// <param name="approximate">False only for the live preview encode,
     /// whose bytes are measured rather than guessed. ADR-0006 requires the
     /// UI to keep the two apart, and the tilde is how it says so.</param>
@@ -1118,14 +1242,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return string.Empty;
         }
 
-        var percent = 100.0 * (1.0 - (double)outputBytes / sourceBytes);
+        var percent = 100.0 * (1.0 - ((double)outputBytes / sourceBytes));
         var prefix = approximate ? "~" : string.Empty;
 
         return percent switch
         {
             >= 1 => $"{prefix}{percent:0}% smaller",
-            <= -1 => "roughly the same size (some formats need re-encoding)",
-            _ => "roughly the same size",
+            <= -1 => $"{prefix}{-percent:0}% larger",
+            _ => "No change",
         };
     }
 

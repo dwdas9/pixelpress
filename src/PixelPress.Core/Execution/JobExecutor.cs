@@ -144,6 +144,38 @@ public sealed class JobExecutor
                 return Failed(item, codecResult.ErrorMessage ?? "This file could not be processed.");
             }
 
+            // An optimizer must never hand back a bigger file. Re-encoding an
+            // already-compressed image at high quality routinely inflates it,
+            // so when the encode wins nothing, throw it away and keep the
+            // original.
+            if (InflationGuard.ShouldKeepOriginal(
+                    item.SourceFormat,
+                    item.OutputFormat,
+                    codecResult.WasResized,
+                    metadataPolicy,
+                    item.SourceBytes,
+                    codecResult.OutputBytes ?? long.MaxValue))
+            {
+                _fileSystem.DeleteFile(tempPath);
+
+                // In overwrite mode the original is already at the output path;
+                // there is nothing to do. Writing to a separate folder, it still
+                // has to get there, or the batch silently drops a file.
+                if (!PathsMatch(item.SourcePath, item.OutputPath))
+                {
+                    _fileSystem.CopyFile(item.SourcePath, item.OutputPath, overwrite: true);
+                }
+
+                return new ItemResult
+                {
+                    SourcePath = item.SourcePath,
+                    OutputPath = item.OutputPath,
+                    Outcome = ItemOutcome.KeptOriginal,
+                    SourceBytes = item.SourceBytes,
+                    OutputBytes = item.SourceBytes,
+                };
+            }
+
             _fileSystem.MoveFileAtomic(tempPath, item.OutputPath, overwrite: true);
 
             return new ItemResult
@@ -161,6 +193,12 @@ public sealed class JobExecutor
             return Failed(item, $"Could not write the output file: {ex.Message}");
         }
     }
+
+    private static bool PathsMatch(string a, string b) =>
+        string.Equals(
+            Path.GetFullPath(a),
+            Path.GetFullPath(b),
+            OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 
     private static ItemResult Failed(PlannedItem item, string message) => new()
     {

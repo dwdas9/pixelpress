@@ -1,13 +1,14 @@
-using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.VisualTree;
 using PixelPress.Core.Formats;
+using PixelPress.Desktop.Infrastructure;
 using PixelPress.Desktop.ViewModels;
 
 namespace PixelPress.Desktop.Views;
@@ -66,9 +67,46 @@ public sealed partial class MainWindow : Window
         HandleLayer.PointerPressed += OnDividerPressed;
         HandleLayer.PointerMoved += OnDividerMoved;
         HandleLayer.PointerReleased += OnDividerReleased;
+
+        // A right-click must act on the row under the cursor, not on whatever
+        // was left-clicked last. ListBox does not select on right-press, so the
+        // selection is moved here — tunnelling, to land before the ContextMenu
+        // opens and reads the selection.
+        QueueList.AddHandler(PointerPressedEvent, OnQueuePointerPressed, RoutingStrategies.Tunnel);
     }
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
+
+    // --- Viewport zoom -----------------------------------------------------
+
+    /// <summary>Wheel over the preview zooms, as every image viewer does.
+    /// Marked handled so the enclosing ScrollViewer does not also scroll —
+    /// the pane would lurch sideways under the cursor otherwise.</summary>
+    private void OnViewportWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (!ViewModel.HasPreview)
+        {
+            return;
+        }
+
+        ViewModel.NudgeZoom(e.Delta.Y);
+        e.Handled = true;
+    }
+
+    private void OnQueuePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(QueueList);
+        if (!point.Properties.IsRightButtonPressed)
+        {
+            return;
+        }
+
+        if (e.Source is Control source &&
+            source.FindAncestorOfType<ListBoxItem>(includeSelf: true) is { DataContext: PlanItemRow row })
+        {
+            ViewModel.SelectedPlanItem = row;
+        }
+    }
 
     // --- Comparison divider ----------------------------------------------
 
@@ -281,37 +319,56 @@ public sealed partial class MainWindow : Window
         ThemeToggle.Content = goingDark ? "☀️  Light" : "🌙  Dark";
     }
 
-    private void OnOpenOutputFolderClick(object? sender, RoutedEventArgs e)
-    {
-        var path = ViewModel.OutputDirectory;
-        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
-        {
-            return;
-        }
+    private void OnOpenOutputFolderClick(object? sender, RoutedEventArgs e) =>
+        SystemFolders.OpenFolder(ViewModel.OutputDirectory);
 
-        // No cross-platform "open in file manager" API exists in .NET; each OS
-        // has its own launcher. Errors here (e.g. no file manager in a
-        // stripped-down environment) are deliberately swallowed — failing to
-        // open a convenience shortcut should never surface as an error.
-        try
+    private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
+
+    /// <summary>Help → Supported Formats. Answers the one question the format
+    /// registry can answer authoritatively, from the registry itself rather
+    /// than a hand-maintained list that would drift out of date.</summary>
+    private async void OnSupportedFormatsClick(object? sender, RoutedEventArgs e)
+    {
+        var decodable = FormatRegistry.All.Where(f => f.CanDecode).Select(f => f.DisplayName);
+        var encodable = FormatRegistry.EncodableFormats.Select(f => f.DisplayName);
+
+        var dialog = new Window
         {
-            if (OperatingSystem.IsWindows())
+            Title = "Supported formats",
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
-            }
-            else if (OperatingSystem.IsMacOS())
-            {
-                Process.Start("open", path);
-            }
-            else if (OperatingSystem.IsLinux())
-            {
-                Process.Start("xdg-open", path);
-            }
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            // Swallowed deliberately; see comment above.
-        }
+                Margin = new Thickness(20),
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Can open:",
+                        FontWeight = FontWeight.SemiBold,
+                    },
+                    new TextBlock
+                    {
+                        Text = string.Join(", ", decodable),
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new TextBlock
+                    {
+                        Text = "Can save as:",
+                        FontWeight = FontWeight.SemiBold,
+                    },
+                    new TextBlock
+                    {
+                        Text = string.Join(", ", encodable),
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                },
+            },
+        };
+
+        await dialog.ShowDialog(this);
     }
 
     private static List<string> ToLocalPaths(IEnumerable<IStorageItem> items) =>

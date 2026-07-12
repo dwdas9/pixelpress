@@ -8,7 +8,13 @@ namespace PixelPress.Desktop.ViewModels;
 public enum QueueItemStatus
 {
     Pending,
+
     Optimized,
+
+    /// <summary>Encoded fine, but no smaller — the original was kept. Neither
+    /// a success nor a failure, and shown as neither.</summary>
+    Unchanged,
+
     Failed,
 }
 
@@ -54,10 +60,13 @@ public sealed partial class PlanItemRow : ObservableObject
     partial void OnStatusChanged(QueueItemStatus value)
     {
         OnPropertyChanged(nameof(IsOptimized));
+        OnPropertyChanged(nameof(IsUnchanged));
         OnPropertyChanged(nameof(IsFailed));
     }
 
     public bool IsOptimized => Status == QueueItemStatus.Optimized;
+
+    public bool IsUnchanged => Status == QueueItemStatus.Unchanged;
 
     public bool IsFailed => Status == QueueItemStatus.Failed;
 

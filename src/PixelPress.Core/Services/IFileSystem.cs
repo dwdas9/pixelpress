@@ -34,6 +34,12 @@ public interface IFileSystem
     /// process is killed mid-move.</summary>
     void MoveFileAtomic(string tempPath, string destinationPath, bool overwrite);
 
+    /// <summary>Copies a file, used when <see cref="Processing.InflationGuard"/>
+    /// abandons an encode that came out bigger than the source: the original
+    /// still has to reach the output folder, or the batch would be missing a
+    /// file.</summary>
+    void CopyFile(string sourcePath, string destinationPath, bool overwrite);
+
     /// <summary>Best-effort delete used to clean up an abandoned temp
     /// file after a failed encode. Never throws — a cleanup failure must
     /// not mask the original error being reported to the user.</summary>
@@ -74,6 +80,9 @@ public sealed class PhysicalFileSystem : IFileSystem
 
     public void MoveFileAtomic(string tempPath, string destinationPath, bool overwrite) =>
         File.Move(tempPath, destinationPath, overwrite);
+
+    public void CopyFile(string sourcePath, string destinationPath, bool overwrite) =>
+        File.Copy(sourcePath, destinationPath, overwrite);
 
     public void DeleteFile(string path)
     {

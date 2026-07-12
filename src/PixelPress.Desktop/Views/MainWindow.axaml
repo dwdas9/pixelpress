@@ -19,10 +19,82 @@
       All colour lives in Styles/AppStyles.axaml.
     -->
 
-    <Grid RowDefinitions="Auto,*,Auto">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- ==================== Menu bar ==================== -->
+        <!--
+          Every item here is a real command bound to real view-model state.
+          Nothing is stubbed: a greyed-out menu that never lights up is worse
+          than an absent one.
+        -->
+        <Menu Grid.Row="0"
+              Background="{DynamicResource CardBrush}"
+              BorderBrush="{DynamicResource HairlineBrush}"
+              BorderThickness="0,0,0,1">
+
+            <MenuItem Header="_File">
+                <MenuItem Header="Add _Files…"
+                          InputGesture="Ctrl+O"
+                          Click="OnAddFilesClick" />
+                <MenuItem Header="Add F_older…"
+                          InputGesture="Ctrl+Shift+O"
+                          Click="OnAddFolderClick" />
+                <Separator />
+                <MenuItem Header="_Optimize Batch"
+                          InputGesture="Ctrl+Enter"
+                          IsEnabled="{Binding CanOptimize}"
+                          Command="{Binding OptimizeCommand}" />
+                <MenuItem Header="_Stop"
+                          IsEnabled="{Binding IsRunning}"
+                          Command="{Binding CancelRunCommand}" />
+                <Separator />
+                <MenuItem Header="Open Output Folder"
+                          Command="{Binding OpenOutputFolderCommand}" />
+                <MenuItem Header="Change Output Folder…"
+                          IsEnabled="{Binding ShowOutputFolderControl}"
+                          Click="OnChangeOutputFolderClick" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="OnExitClick" />
+            </MenuItem>
+
+            <MenuItem Header="_Edit">
+                <MenuItem Header="_Remove From Queue"
+                          InputGesture="Delete"
+                          Command="{Binding RemoveSelectedCommand}" />
+                <MenuItem Header="_Clear Queue"
+                          IsEnabled="{Binding HasPlan}"
+                          Command="{Binding StartOverCommand}" />
+                <Separator />
+                <MenuItem Header="Show in _File Manager"
+                          Command="{Binding ShowSelectedInFolderCommand}" />
+            </MenuItem>
+
+            <MenuItem Header="_View">
+                <MenuItem Header="Zoom _In"
+                          InputGesture="Ctrl+Plus"
+                          Command="{Binding ZoomInCommand}" />
+                <MenuItem Header="Zoom _Out"
+                          InputGesture="Ctrl+Minus"
+                          Command="{Binding ZoomOutCommand}" />
+                <MenuItem Header="_Fit to Window"
+                          InputGesture="Ctrl+0"
+                          Command="{Binding ResetZoomCommand}" />
+                <Separator />
+                <MenuItem Header="Show _All Files"
+                          Command="{Binding ShowAllFilesCommand}" />
+                <MenuItem Header="Show Only _Failed"
+                          Command="{Binding ShowFailedFilesCommand}" />
+                <Separator />
+                <MenuItem Header="Toggle _Theme" Click="OnToggleThemeClick" />
+            </MenuItem>
+
+            <MenuItem Header="_Help">
+                <MenuItem Header="_Supported Formats" Click="OnSupportedFormatsClick" />
+            </MenuItem>
+        </Menu>
 
         <!-- ==================== Toolbar ==================== -->
-        <Border Grid.Row="0"
+        <Border Grid.Row="1"
                 Background="{DynamicResource CardBrush}"
                 BorderBrush="{DynamicResource HairlineBrush}"
                 BorderThickness="0,0,0,1"
@@ -77,7 +149,7 @@
         </Border>
 
         <!-- ==================== Three columns ==================== -->
-        <Grid Grid.Row="1" ColumnDefinitions="300,Auto,*,Auto,340">
+        <Grid Grid.Row="2" ColumnDefinitions="300,Auto,*,Auto,340">
 
             <!-- ===== Left: asset queue ===== -->
             <Border Grid.Column="0"
@@ -133,6 +205,22 @@
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ItemsSource="{Binding VisibleQueueRows}"
                              SelectedItem="{Binding SelectedPlanItem}">
+
+                        <!-- Right-clicking a row acts on that row, so the menu
+                             is bound to the window's view model rather than the
+                             row's, and every command works off SelectedPlanItem.
+                             OnQueueRightClick selects the row under the cursor
+                             first, so right-click-without-left-click behaves. -->
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Remove From Queue"
+                                          Command="{Binding RemoveSelectedCommand}" />
+                                <Separator />
+                                <MenuItem Header="Show in File Manager"
+                                          Command="{Binding ShowSelectedInFolderCommand}" />
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:PlanItemRow">
                                 <Grid ColumnDefinitions="Auto,*,Auto"
@@ -181,6 +269,14 @@
                                                    FontWeight="Bold"
                                                    Foreground="{DynamicResource SuccessBrush}"
                                                    IsVisible="{Binding IsOptimized}" />
+                                        <!-- Kept as-is: encoded fine, but no
+                                             smaller, so the original stands. -->
+                                        <TextBlock Text="="
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   IsVisible="{Binding IsUnchanged}"
+                                                   ToolTip.Tip="Already as small as this quality setting can make it — the original was kept." />
                                         <TextBlock Text="!"
                                                    FontSize="13"
                                                    FontWeight="Bold"
@@ -244,8 +340,22 @@
                 <!-- The comparison surface. Both panes render the same image
                      box; the "after" pane is clipped to a band whose width the
                      code-behind drives from the handle (Phase 2). -->
-                <Border Grid.Row="1" Classes="pane" Margin="16">
+                <Border Grid.Row="1" Classes="pane" Margin="16"
+                        PointerWheelChanged="OnViewportWheel">
                     <Panel>
+                        <Panel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Zoom In" Command="{Binding ZoomInCommand}" />
+                                <MenuItem Header="Zoom Out" Command="{Binding ZoomOutCommand}" />
+                                <MenuItem Header="Fit to Window" Command="{Binding ResetZoomCommand}" />
+                                <Separator />
+                                <MenuItem Header="Remove From Queue"
+                                          Command="{Binding RemoveSelectedCommand}" />
+                                <MenuItem Header="Show in File Manager"
+                                          Command="{Binding ShowSelectedInFolderCommand}" />
+                            </ContextMenu>
+                        </Panel.ContextMenu>
+
                         <ScrollViewer x:Name="CompareScroller"
                                       HorizontalScrollBarVisibility="Auto"
                                       VerticalScrollBarVisibility="Auto"
@@ -410,10 +520,28 @@
                                 <TextBlock Text="{Binding SummaryHeadline}"
                                            Classes="h2"
                                            HorizontalAlignment="Center"
+                                           TextWrapping="Wrap"
                                            TextAlignment="Center" />
+
+                                <!-- SummarySavings is now always a short figure
+                                     ("58% smaller", "No change"), so it fits the
+                                     36px stat. Wrapping stays as a backstop. -->
                                 <TextBlock Text="{Binding SummarySavings}"
                                            Classes="stat"
-                                           HorizontalAlignment="Center" />
+                                           HorizontalAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center" />
+
+                                <!-- The sentence that used to be crammed into
+                                     the stat, and clipped. -->
+                                <TextBlock Text="{Binding SummarySavingsNote}"
+                                           IsVisible="{Binding HasSummarySavingsNote}"
+                                           Classes="caption"
+                                           MaxWidth="420"
+                                           Margin="0,2,0,6"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center" />
+
                                 <TextBlock Classes="caption"
                                            HorizontalAlignment="Center"
                                            Text="{Binding SummaryOriginalSizeText, StringFormat='{}{0} before'}" />
@@ -588,7 +716,7 @@
         </Grid>
 
         <!-- ==================== Status bar ==================== -->
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Background="{DynamicResource StatusBarBrush}"
                 BorderBrush="{DynamicResource HairlineBrush}"
                 BorderThickness="0,1,0,0"

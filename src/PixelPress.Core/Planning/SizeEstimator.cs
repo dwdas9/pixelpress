@@ -18,6 +18,15 @@ internal static class SizeEstimator
         int quality)
     {
         var ratio = BaseRatio(source, output) * QualityFactor(quality, output);
+
+        // A same-format re-encode can never end up bigger than the source: if
+        // it does, InflationGuard keeps the original. Predicting growth here
+        // would promise something the executor will not do.
+        if (source.Id == output.Id)
+        {
+            ratio = Math.Min(ratio, 1.0);
+        }
+
         return Math.Max(1, (long)(sourceBytes * ratio));
     }
 
@@ -60,11 +69,18 @@ internal static class SizeEstimator
 
     /// <summary>
     /// Maps the 1–100 quality dial to a multiplier on the base ratio, for
-    /// formats that actually have a quality knob. A deliberately simple,
-    /// monotonic linear curve calibrated so quality 80 (the default)
-    /// leaves the base ratio unchanged, higher quality inflates the
-    /// estimate, and lower quality shrinks it. Coarse by design — the
-    /// exact number comes from the live preview encode, not here.
+    /// formats that actually have a quality knob. Monotonic, coarse by
+    /// design — the exact number comes from the live preview encode.
+    ///
+    /// The curve is steeper above 80 than below it, and that is not a fudge
+    /// factor. Output size does not rise linearly with the quality setting:
+    /// the top of the range is where an encoder starts spending
+    /// disproportionate bits preserving detail (including the compression
+    /// artifacts of a previous encode), which is exactly why a "near
+    /// original" re-encode can come out *larger* than the file it started
+    /// from. A linear curve predicted a comfortable saving at quality 100
+    /// while the real encode grew the file — the estimate has to bend where
+    /// reality bends.
     /// </summary>
     private static double QualityFactor(int quality, ImageFormat output)
     {
@@ -74,7 +90,18 @@ internal static class SizeEstimator
             return 1.0;
         }
 
-        // 0.20 + 0.010·q → 1.00 at q=80, ~1.20 at q=100, ~0.21 at q=1.
-        return 0.20 + 0.010 * Math.Clamp(quality, 1, 100);
+        var q = Math.Clamp(quality, 1, 100);
+
+        // Below the default: 0.20 + 0.010·q → ~0.21 at q=1, 1.00 at q=80.
+        if (q <= 80)
+        {
+            return 0.20 + (0.010 * q);
+        }
+
+        // Above it, three times as steep → 1.60 at q=100. Against the 0.65
+        // lossy→lossy base that lands just over 1.0, which the same-format
+        // clamp in Estimate turns into "expect roughly no saving" — which is
+        // the honest prediction for a near-original re-encode.
+        return 1.0 + (0.030 * (q - 80));
     }
 }
