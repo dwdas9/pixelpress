@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using PixelPress.Core.Formats;
 using PixelPress.Desktop.Infrastructure;
@@ -64,9 +65,16 @@ public sealed partial class MainWindow : Window
             }
         };
 
-        HandleLayer.PointerPressed += OnDividerPressed;
-        HandleLayer.PointerMoved += OnDividerMoved;
-        HandleLayer.PointerReleased += OnDividerReleased;
+        // Only the handle grabs the divider. Everything else on the surface is
+        // free for panning — the two gestures would otherwise fight, and
+        // panning is the one you use far more often once zoomed in.
+        DividerHandle.PointerPressed += OnDividerPressed;
+        DividerHandle.PointerMoved += OnDividerMoved;
+        DividerHandle.PointerReleased += OnDividerReleased;
+
+        CompareScroller.PointerPressed += OnPanPressed;
+        CompareScroller.PointerMoved += OnPanMoved;
+        CompareScroller.PointerReleased += OnPanReleased;
 
         // A right-click must act on the row under the cursor, not on whatever
         // was left-clicked last. ListBox does not select on right-press, so the
@@ -79,9 +87,18 @@ public sealed partial class MainWindow : Window
 
     // --- Viewport zoom -----------------------------------------------------
 
-    /// <summary>Wheel over the preview zooms, as every image viewer does.
-    /// Marked handled so the enclosing ScrollViewer does not also scroll —
-    /// the pane would lurch sideways under the cursor otherwise.</summary>
+    /// <summary>
+    /// Wheel over the preview zooms — with or without Ctrl, since both are
+    /// muscle memory depending on which app you came from.
+    ///
+    /// The zoom is anchored to the pointer: whatever pixel is under the cursor
+    /// stays under the cursor. Zooming about the pane's centre instead makes
+    /// the detail you were inspecting slide away exactly when you lean in,
+    /// which is the difference between an image viewer that feels right and
+    /// one that feels broken.
+    ///
+    /// Marked handled so the ScrollViewer does not also scroll.
+    /// </summary>
     private void OnViewportWheel(object? sender, PointerWheelEventArgs e)
     {
         if (!ViewModel.HasPreview)
@@ -89,8 +106,89 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // Content coordinates are unscaled (CompareHost sits inside the zoom
+        // transform), so this point survives the zoom change and can be used to
+        // work out where it must land afterwards.
+        var anchorInContent = e.GetPosition(CompareHost);
+        var anchorInViewport = e.GetPosition(CompareScroller);
+
         ViewModel.NudgeZoom(e.Delta.Y);
+        var zoom = ViewModel.ZoomFactor;
+
+        // The new offset can only be clamped once layout has run with the new
+        // scale — Extent is stale until then.
+        Dispatcher.UIThread.Post(
+            () => SetScrollOffset(new Vector(
+                (anchorInContent.X * zoom) - anchorInViewport.X,
+                (anchorInContent.Y * zoom) - anchorInViewport.Y)),
+            DispatcherPriority.Loaded);
+
         e.Handled = true;
+    }
+
+    // --- Pan ---------------------------------------------------------------
+
+    private bool _isPanning;
+    private Point _panStart;
+    private Vector _panOrigin;
+
+    private void OnPanPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(CompareScroller).Properties.IsLeftButtonPressed ||
+            !ViewModel.HasPreview)
+        {
+            return;
+        }
+
+        // The handle's own drag wins; it sits on top of the image.
+        if (e.Source is Control source &&
+            source.FindAncestorOfType<Border>(includeSelf: true) == DividerHandle)
+        {
+            return;
+        }
+
+        _isPanning = true;
+        _panStart = e.GetPosition(CompareScroller);
+        _panOrigin = CompareScroller.Offset;
+        CompareScroller.Cursor = new Cursor(StandardCursorType.SizeAll);
+        e.Pointer.Capture(CompareScroller);
+    }
+
+    private void OnPanMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isPanning)
+        {
+            return;
+        }
+
+        // Drag right → content moves right → the viewport moves left over it.
+        var current = e.GetPosition(CompareScroller);
+        SetScrollOffset(_panOrigin - (current - _panStart));
+    }
+
+    private void OnPanReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isPanning)
+        {
+            return;
+        }
+
+        _isPanning = false;
+        CompareScroller.Cursor = Cursor.Default;
+        e.Pointer.Capture(null);
+    }
+
+    /// <summary>Applies a scroll offset, clamped to what actually exists.
+    /// An unclamped offset leaves the ScrollViewer showing empty space past
+    /// the edge of the image.</summary>
+    private void SetScrollOffset(Vector offset)
+    {
+        var maxX = Math.Max(0, CompareScroller.Extent.Width - CompareScroller.Viewport.Width);
+        var maxY = Math.Max(0, CompareScroller.Extent.Height - CompareScroller.Viewport.Height);
+
+        CompareScroller.Offset = new Vector(
+            Math.Clamp(offset.X, 0, maxX),
+            Math.Clamp(offset.Y, 0, maxY));
     }
 
     private void OnQueuePointerPressed(object? sender, PointerPressedEventArgs e)
@@ -113,12 +211,12 @@ public sealed partial class MainWindow : Window
     private void OnDividerPressed(object? sender, PointerPressedEventArgs e)
     {
         _isDraggingDivider = true;
-        e.Pointer.Capture(HandleLayer);
+        e.Pointer.Capture(DividerHandle);
 
-        // Pressing anywhere on the surface takes the divider to the pointer,
-        // rather than requiring the 28px handle to be hit first. The handle
-        // is an affordance, not a hit target.
-        SetDividerFromPointer(e);
+        // Deliberately does *not* snap the divider to the press point: the grab
+        // should pick the divider up where it is, not shift it by the few pixels
+        // between the handle's centre and where the pointer landed on it.
+        e.Handled = true;
     }
 
     private void OnDividerMoved(object? sender, PointerEventArgs e)

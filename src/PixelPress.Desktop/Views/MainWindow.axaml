@@ -388,18 +388,25 @@
                                                Height="{Binding #CompareHost.Bounds.Height}" />
                                     </Border>
 
-                                    <Canvas x:Name="HandleLayer" Background="Transparent">
+                                    <!-- No Background on the Canvas, and the line
+                                         is not hit-testable: only the handle
+                                         itself grabs the divider. A transparent
+                                         full-surface layer would swallow every
+                                         press and make panning impossible. -->
+                                    <Canvas x:Name="HandleLayer">
                                         <shapes:Rectangle x:Name="DividerLine"
                                                           Width="2"
                                                           Height="{Binding #CompareHost.Bounds.Height}"
                                                           Fill="White"
-                                                          Opacity="0.9" />
+                                                          Opacity="0.9"
+                                                          IsHitTestVisible="False" />
                                         <Border x:Name="DividerHandle"
                                                 Width="28" Height="28"
                                                 CornerRadius="14"
                                                 Background="White"
                                                 BoxShadow="0 2 8 0 #40000000"
-                                                Cursor="SizeWestEast">
+                                                Cursor="SizeWestEast"
+                                                ToolTip.Tip="Drag to compare">
                                             <TextBlock Text="⇄"
                                                        Foreground="#0F172A"
                                                        FontSize="13"

@@ -79,11 +79,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnQualityChanged(int value)
     {
         OnPropertyChanged(nameof(QualityLabel));
-        // The slider fires this rapidly while dragging; debounce so we
-        // re-plan once the user settles rather than on every tick.
-        if (Stage == WorkflowStage.PlanReady)
+
+        if (CurrentPlan is not { } plan)
         {
-            _ = DebouncedReplanAsync();
+            return;
+        }
+
+        // Quality cannot change the plan's shape — only its numbers — so this
+        // is pure arithmetic with no file-system work, and can run on every
+        // slider tick. It used to route through a debounced full re-plan,
+        // which re-scanned the disk to recompute a multiplication, and left
+        // the batch estimate looking frozen.
+        LeaveSummaryOnSettingsChange();
+        CurrentPlan = JobPlanner.ReEstimate(plan, Quality);
+
+        // The preview encode is the expensive half, and it still debounces.
+        _ = DebouncedPreviewAsync();
+    }
+
+    /// <summary>Touching a setting while the completion summary is up means the
+    /// user is setting up another pass. Drop back to the plan so the batch is
+    /// runnable again — in the workspace layout the inspector is reachable at
+    /// every stage, so this is a normal thing to do, not an edge case.</summary>
+    private void LeaveSummaryOnSettingsChange()
+    {
+        if (Stage == WorkflowStage.Summary)
+        {
+            RunSummary = null;
+            RunProgress = null;
+            Stage = WorkflowStage.PlanReady;
         }
     }
 
@@ -108,24 +132,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private FormatOption _selectedTargetFormatOption;
 
-    partial void OnSelectedTargetFormatOptionChanged(FormatOption value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnSelectedTargetFormatOptionChanged(FormatOption value) => ReplanOnSettingChange();
 
     [ObservableProperty]
     private bool _stripMetadata;
 
-    partial void OnStripMetadataChanged(bool value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnStripMetadataChanged(bool value) => ReplanOnSettingChange();
 
     [ObservableProperty]
     private bool _overwriteOriginals;
@@ -133,10 +145,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnOverwriteOriginalsChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowOutputFolderControl));
-        if (Stage == WorkflowStage.PlanReady)
+        ReplanOnSettingChange();
+    }
+
+    /// <summary>Every setting except quality can change the plan's *shape* —
+    /// which format a file becomes, therefore its output path, therefore which
+    /// names collide — so these need a real re-plan, not a re-estimate.
+    ///
+    /// Gated on having inputs rather than on being in the PlanReady stage: the
+    /// workspace keeps the inspector reachable while the summary is up, and a
+    /// setting changed there must take effect rather than being silently
+    /// dropped.</summary>
+    private void ReplanOnSettingChange()
+    {
+        if (_inputPaths.Count == 0)
         {
-            _ = ReplanAsync();
+            return;
         }
+
+        LeaveSummaryOnSettingsChange();
+        _ = ReplanAsync(showPlanningState: false);
     }
 
     /// <summary>Hides the "Change output folder…" control once the user
@@ -147,24 +175,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _resizeEnabled;
 
-    partial void OnResizeEnabledChanged(bool value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnResizeEnabledChanged(bool value) => ReplanOnSettingChange();
 
     [ObservableProperty]
     private int _resizeMaxDimensionPixels = 2048;
 
-    partial void OnResizeMaxDimensionPixelsChanged(int value)
-    {
-        if (Stage == WorkflowStage.PlanReady)
-        {
-            _ = ReplanAsync();
-        }
-    }
+    partial void OnResizeMaxDimensionPixelsChanged(int value) => ReplanOnSettingChange();
 
     /// <summary>Snapshot of the controls rail's current values, saved on
     /// exit via <see cref="ISettingsStore"/>.</summary>
@@ -1069,12 +1085,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         Stage = WorkflowStage.AwaitingInput;
     }
 
-    /// <summary>Re-plans after a short quiet period, cancelling any
-    /// re-plan still pending from an earlier slider tick. Keeps the live
-    /// estimate responsive without re-scanning on every pixel of drag.
-    /// Unlike <see cref="ReplanAsync"/> it stays on the plan-ready screen
-    /// (no flash to the "reading files…" state) while settling.</summary>
-    private async Task DebouncedReplanAsync()
+    /// <summary>Refreshes the preview encode after a short quiet period,
+    /// cancelling any refresh still pending from an earlier slider tick.
+    ///
+    /// Only the preview is debounced now. The batch estimate rides along with
+    /// every tick because re-estimating is arithmetic; encoding a full-size
+    /// image is not, and doing that on every pixel of a drag would make the
+    /// slider stutter.</summary>
+    private async Task DebouncedPreviewAsync()
     {
         _replanDebounceCts?.Cancel();
         _replanDebounceCts?.Dispose();
@@ -1089,10 +1107,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (_inputPaths.Count > 0)
-        {
-            await ReplanAsync(showPlanningState: false);
-        }
+        await RefreshPreviewAsync();
     }
 
     private async Task ReplanAsync(bool showPlanningState = true)
