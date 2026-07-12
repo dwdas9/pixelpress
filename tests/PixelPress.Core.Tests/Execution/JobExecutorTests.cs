@@ -136,6 +136,41 @@ public sealed class JobExecutorTests
     }
 
     [Fact]
+    public async Task An_encode_that_grows_the_file_is_discarded_and_the_original_kept()
+    {
+        var fs = new FakeFileSystem();
+        fs.AddFile("/pics/photo.jpg", 1_000);
+        var (plan, _) = PlanFrom(fs, Request("/pics"));
+
+        // What a near-original re-encode of an already-compressed JPEG does.
+        var codec = new FakeImageCodec(fs)
+        {
+            Behavior = _ => new CodecResult { Success = true, OutputBytes = 1_500 },
+        };
+        var executor = new JobExecutor(fs, codec);
+
+        var summary = await executor.ExecuteAsync(plan, Request("/pics"));
+
+        var result = Assert.Single(summary.Results);
+        Assert.Equal(ItemOutcome.KeptOriginal, result.Outcome);
+
+        // The output must be the original's size, not the fatter encode's —
+        // and the batch must never report growth.
+        Assert.Equal(1_000, result.OutputBytes);
+        Assert.Equal(1_000, summary.TotalOutputBytes);
+        Assert.True(summary.TotalOutputBytes <= summary.TotalSourceBytes);
+        Assert.Equal(1, summary.KeptOriginalCount);
+        Assert.Equal(0, summary.FailedCount);
+
+        // The original still has to arrive in the output folder, or the batch
+        // would silently be missing a file.
+        Assert.True(fs.FileExists(result.OutputPath));
+
+        // And no temp file may survive the discard.
+        Assert.DoesNotContain(fs.AllPaths, p => p.Contains(".tmp-", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Progress_carries_the_finished_item_so_a_queue_can_mark_it()
     {
         var fs = new FakeFileSystem();

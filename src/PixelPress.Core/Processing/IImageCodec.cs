@@ -52,6 +52,13 @@ internal sealed record CodecResult
     /// <summary>Size of the file written to DestinationPath, when successful.</summary>
     public long? OutputBytes { get; init; }
 
+    /// <summary>True when the resize step actually changed the image's
+    /// dimensions. Distinct from "resize was enabled": a source already
+    /// smaller than the cap is never upscaled, so the request is a no-op and
+    /// the encode is still a pure re-compression. <see cref="InflationGuard"/>
+    /// needs to tell those apart.</summary>
+    public bool WasResized { get; init; }
+
     /// <summary>Plain-language reason for failure, safe to show a user.</summary>
     public string? ErrorMessage { get; init; }
 }
