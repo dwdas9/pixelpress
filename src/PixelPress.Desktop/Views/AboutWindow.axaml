@@ -1,0 +1,63 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PixelPress.Desktop.Views.AboutWindow"
+        Title="About PixelPress"
+        Width="440"
+        SizeToContent="Height"
+        CanResize="False"
+        Background="{DynamicResource CanvasBrush}"
+        WindowStartupLocation="CenterOwner">
+
+    <!--
+      Standard About box: what this is, which build you are running, who wrote
+      it, and where to go next. Every field is bound in code-behind from the
+      assembly and ProjectLinks, so no string here can drift out of date.
+    -->
+
+    <StackPanel Margin="24" Spacing="14">
+
+        <StackPanel Spacing="3">
+            <TextBlock Text="PixelPress" Classes="h2" />
+            <TextBlock x:Name="VersionText" Classes="caption" />
+        </StackPanel>
+
+        <TextBlock Classes="body secondary"
+                   TextWrapping="Wrap"
+                   Text="A desktop batch image optimizer. Convert, resize, strip metadata and re-encode whole folders of images, with a live before/after preview of the exact file you will get. Everything runs on this machine, and no image ever leaves it." />
+
+        <Border BorderBrush="{DynamicResource HairlineBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="0,12,0,0">
+            <StackPanel Spacing="7">
+                <Grid ColumnDefinitions="110,*">
+                    <TextBlock Grid.Column="0" Text="Author" Classes="caption" />
+                    <TextBlock Grid.Column="1" x:Name="AuthorText" FontSize="12" />
+                </Grid>
+                <Grid ColumnDefinitions="110,*">
+                    <TextBlock Grid.Column="0" Text="Image engine" Classes="caption" />
+                    <TextBlock Grid.Column="1"
+                               Text="ImageMagick, via Magick.NET"
+                               FontSize="12" />
+                </Grid>
+                <Grid ColumnDefinitions="110,*">
+                    <TextBlock Grid.Column="0" Text="Interface" Classes="caption" />
+                    <TextBlock Grid.Column="1" Text="Avalonia UI on .NET 8" FontSize="12" />
+                </Grid>
+                <!-- No licence row: the repository has no LICENSE file, and a
+                     dialog that names a licence the project has not actually
+                     adopted is worse than one that stays quiet. Add the row when
+                     the file lands. -->
+            </StackPanel>
+        </Border>
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Classes="subtle" Content="GitHub repository" Click="OnRepositoryClick" />
+            <Button Classes="subtle" Content="Documentation" Click="OnDocumentationClick" />
+        </StackPanel>
+
+        <Button Classes="primary"
+                Content="Close"
+                HorizontalAlignment="Right"
+                Click="OnCloseClick" />
+    </StackPanel>
+</Window>

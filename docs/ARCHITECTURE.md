@@ -103,6 +103,35 @@ smaller bytes — a format conversion, a resize that actually changed
 dimensions, or metadata stripping (a privacy request; never traded for
 bytes). See ADR-0007 for the full reasoning.
 
+### The exemption's cost, and what pays for it (M11c, 2026-07-13)
+
+The format-conversion exemption is right, and it is also the hole a user
+fell through: a 354-photo JPEG batch targeting **GIF** planned at "~35%
+smaller" and encoded 38% *larger*, file after file, each one ticked green
+and labelled OPTIMIZED.
+
+Nothing in the engine was wrong. Three things around it were:
+
+1. **`SizeEstimator` had no concept of a target that cannot compress.**
+   GIF is neither `IsLossless` nor `HasQualityDial`, so JPEG → GIF fell
+   through every branch onto the generic lossy→lossy ratio of `0.65`. The
+   estimator now sizes no-dial targets (GIF, PNG, BMP, TIFF) against the
+   *source's* compression class and predicts growth, which for a photo into
+   any of them is the normal outcome.
+2. **The quality dial was live for formats that ignore it.**
+   `HasQualityDial` governed the engine but not the UI, so the user dragged
+   quality to 8% to shrink a GIF batch and every drag was a no-op. The dial
+   now greys out and says why.
+3. **A red number is not a warning.** The plan now carries
+   `ExpectedToInflate`; the inspector states the growth in bytes, and
+   `Optimize` raises a blocking confirmation before writing anything.
+
+The invariant this establishes is not "output is always smaller" — that is
+unachievable for GIF at any setting, and buying it would mean silently
+ignoring the format the user chose. It is: **the app never grows a batch
+without saying so first, and never calls the result optimized.** A run that
+inflates is reported as `Inflated`, not `Optimized`, everywhere it appears.
+
 ### Validated result (2026-07-12)
 
 First real-world batch: **~5 GB of images → ~500 MB, a ~90% reduction at

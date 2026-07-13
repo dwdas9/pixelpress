@@ -1,4 +1,4 @@
-using Avalonia.Media.Imaging;
+﻿using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PixelPress.Core.Execution;
@@ -58,6 +58,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _previewEncoder = previewEncoder;
         AvailableTargetFormats = BuildAvailableTargetFormats();
         SupportedInputSummary = BuildSupportedInputSummary();
+        SupportedInputCountSummary = BuildSupportedInputCountSummary();
 
         var settings = settingsStore.Load();
         _quality = Math.Clamp(settings.Quality, 1, 100);
@@ -79,6 +80,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnQualityChanged(int value)
     {
         OnPropertyChanged(nameof(QualityLabel));
+        OnPropertyChanged(nameof(QualityDescription));
 
         if (CurrentPlan is not { } plan)
         {
@@ -112,13 +114,31 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Plain-language name for the current quality band, shown
-    /// next to the slider. Pure UI — carries no engine state.</summary>
+    /// next to the slider. Pure UI, carrying no engine state.</summary>
     public string QualityLabel => Quality switch
     {
         <= 45 => "Smaller file",
         <= 70 => "Balanced",
         <= 90 => "High quality",
         _ => "Near-original",
+    };
+
+    /// <summary>What the current setting actually costs and buys, in a sentence
+    /// that moves with the slider.
+    ///
+    /// It replaces a fixed three-column scale ("Smaller file | Balanced |
+    /// Near-original") printed under the track. That scale never changed, so it
+    /// told the user nothing about where they *were*, and in the 340px inspector
+    /// its three labels ran together into "Smaller fileBalancedNear-original".
+    /// One line that answers "what does 51% mean" beats three that answer
+    /// nothing.</summary>
+    public string QualityDescription => Quality switch
+    {
+        <= 25 => "Heavy compression. Visible artefacts on photos.",
+        <= 45 => "Smaller files, with some quality loss on close inspection.",
+        <= 70 => "Balanced. Good quality at a much smaller size.",
+        <= 90 => "High quality. Larger files, few visible artefacts.",
+        _ => "Close to the original. Little compression, and files may barely shrink.",
     };
 
     // --- Controls rail ----------------------------------------------------
@@ -132,7 +152,30 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private FormatOption _selectedTargetFormatOption;
 
-    partial void OnSelectedTargetFormatOptionChanged(FormatOption value) => ReplanOnSettingChange();
+    partial void OnSelectedTargetFormatOptionChanged(FormatOption value)
+    {
+        OnPropertyChanged(nameof(QualityAppliesToTarget));
+        OnPropertyChanged(nameof(QualityIgnoredNote));
+        ReplanOnSettingChange();
+    }
+
+    /// <summary>Whether the quality dial does anything at all for the chosen
+    /// target. <see cref="ImageFormat.HasQualityDial"/> is the single source of
+    /// truth for this (ADR-0006) — but until now only the *engine* consulted it,
+    /// while the UI went on presenting a live slider, a percentage and a preset
+    /// name for GIF and PNG, none of which those encoders ever read. A control
+    /// that visibly does nothing is worse than one that isn't there: the user in
+    /// the GIF batch had dragged quality down to 8% trying to make the files
+    /// smaller, and every one of those drags was a no-op.
+    ///
+    /// "Keep original format" leaves the answer per-file, and the dial does apply
+    /// to most real batches, so it stays live.</summary>
+    public bool QualityAppliesToTarget =>
+        SelectedTargetFormatOption.Id is not { } id || FormatRegistry.Get(id).HasQualityDial;
+
+    public string QualityIgnoredNote => QualityAppliesToTarget
+        ? string.Empty
+        : $"{SelectedTargetFormatOption.DisplayName} has no quality setting. Its size comes from the image itself, not from a dial. Resize, or choose a format with a quality dial, to make these files smaller.";
 
     [ObservableProperty]
     private bool _stripMetadata;
@@ -199,7 +242,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             .Concat(FormatRegistry.EncodableFormats.Select(f => new FormatOption(f.DisplayName, f.Id)))
             .ToList();
 
+    /// <summary>The full list, spelled out. Right for the empty drop zone,
+    /// which has a whole viewport to fill and one job: say what you can drop.</summary>
     public string SupportedInputSummary { get; }
+
+    /// <summary>The same fact, counted rather than enumerated, for the
+    /// inspector — where the spelled-out list wrapped to four lines and buried
+    /// the format dropdown it was meant to annotate. Help → Supported Formats
+    /// prints the list itself, from this same registry.</summary>
+    public string SupportedInputCountSummary { get; }
 
     [ObservableProperty]
     private string? _statusMessage;
@@ -219,12 +270,24 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         var previouslySelectedPath = SelectedPlanItem?.SourcePath;
         _planItemRows = BuildPlanItemRows(value);
 
+        // Every setting change reaches the plan, either as a re-estimate (quality)
+        // or a full re-plan (everything else), so this one line is enough to stop
+        // a stale measurement outliving the settings it was measured at.
+        InvalidateMeasurement();
+
         OnPropertyChanged(nameof(ImageCount));
         OnPropertyChanged(nameof(CanOptimize));
         OnPropertyChanged(nameof(OptimizeButtonLabel));
         OnPropertyChanged(nameof(OriginalSizeText));
+        OnPropertyChanged(nameof(ProjectedOutputBytes));
         OnPropertyChanged(nameof(EstimatedSizeText));
         OnPropertyChanged(nameof(EstimatedSavingsSummary));
+        OnPropertyChanged(nameof(EstimatedOutputIsLarger));
+        OnPropertyChanged(nameof(HasMeasuredBatch));
+        OnPropertyChanged(nameof(BatchAccuracyNote));
+        OnPropertyChanged(nameof(HasInflationWarning));
+        OnPropertyChanged(nameof(InflationWarningText));
+        MeasureBatchCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(FormatFallbackCount));
         OnPropertyChanged(nameof(HasFormatFallbacks));
         OnPropertyChanged(nameof(FallbackSummary));
@@ -280,6 +343,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsRunning));
         OnPropertyChanged(nameof(HasSummary));
         OnPropertyChanged(nameof(StatusBarText));
+        MeasureBatchCommand.NotifyCanExecuteChanged();
     }
 
     public bool ShowDropZone => Stage == WorkflowStage.AwaitingInput;
@@ -304,12 +368,247 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public string OriginalSizeText =>
         CurrentPlan is null ? string.Empty : FormatBytes(CurrentPlan.TotalSourceBytes);
 
+    /// <summary>The batch's projected output size: measured when the user has
+    /// pressed Recalculate, heuristic otherwise. Every figure in the batch panel,
+    /// and the inflation warning, reads from here, so a measurement corrects all
+    /// of them at once and none of them can disagree.</summary>
+    public long ProjectedOutputBytes
+    {
+        get
+        {
+            if (CurrentPlan is not { } plan)
+            {
+                return 0;
+            }
+
+            return _measuredRatio is { } ratio
+                ? Math.Max(1, (long)(plan.TotalSourceBytes * ratio))
+                : plan.TotalEstimatedOutputBytes;
+        }
+    }
+
     public string EstimatedSizeText =>
-        CurrentPlan is null ? string.Empty : FormatBytes(CurrentPlan.TotalEstimatedOutputBytes);
+        CurrentPlan is null ? string.Empty : FormatBytes(ProjectedOutputBytes);
 
     public string EstimatedSavingsSummary => CurrentPlan is null
         ? string.Empty
-        : FormatSavings(CurrentPlan.TotalSourceBytes, CurrentPlan.TotalEstimatedOutputBytes);
+        : FormatSavings(CurrentPlan.TotalSourceBytes, ProjectedOutputBytes);
+
+    /// <summary>The batch-level twin of <see cref="PreviewSavingsIsLarger"/>:
+    /// keeps "~35% larger" out of the success colour.</summary>
+    public bool EstimatedOutputIsLarger =>
+        CurrentPlan is { } plan && ProjectedOutputBytes > plan.TotalSourceBytes;
+
+    /// <summary>Set when the plan expects the batch to end up bigger than it
+    /// started. Shown in the inspector the moment the plan says so, and repeated
+    /// as a confirmation before the run — see <see cref="OptimizeAsync"/>.
+    ///
+    /// A colour on a number was not enough. The GIF batch reported "~35% larger"
+    /// in red and nothing else, next to a button that said "Optimize 354 images",
+    /// and that is not a warning — it is a fact filed where nobody reads facts.
+    /// This says what will happen, in bytes, in a sentence.</summary>
+    public bool HasInflationWarning => EstimatedOutputIsLarger;
+
+    public string InflationWarningText
+    {
+        get
+        {
+            if (CurrentPlan is not { } plan || !EstimatedOutputIsLarger)
+            {
+                return string.Empty;
+            }
+
+            var target = SelectedTargetFormatOption.Id is { } id
+                ? FormatRegistry.Get(id).DisplayName
+                : "This conversion";
+
+            var growth = FormatBytes(ProjectedOutputBytes - plan.TotalSourceBytes);
+
+            return $"{target} cannot compress these images. The batch is expected to grow by about {growth}, "
+                 + $"from {FormatBytes(plan.TotalSourceBytes)} to {FormatBytes(ProjectedOutputBytes)}. "
+                 + "PixelPress will still do it, because you asked for the format, but this run will not save space.";
+        }
+    }
+
+    // --- Batch measurement -------------------------------------------------
+
+    /// <summary>How many images Recalculate encodes for real. Eight is enough to
+    /// wash out one atypical photo and still finish in a couple of seconds on a
+    /// 354-image batch; measuring all of them would cost as much as the run
+    /// itself, which is a dry run, not an estimate.</summary>
+    private const int MeasurementSampleSize = 8;
+
+    private CancellationTokenSource? _measureCts;
+    private double? _measuredRatio;
+    private int _measuredSampleCount;
+
+    /// <summary>True once Recalculate has encoded real images at the current
+    /// settings. Cleared by any change that would make the measurement a lie.</summary>
+    public bool HasMeasuredBatch => _measuredRatio is not null;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(MeasureBatchCommand))]
+    private bool _isMeasuringBatch;
+
+    partial void OnIsMeasuringBatchChanged(bool value) =>
+        OnPropertyChanged(nameof(BatchAccuracyNote));
+
+    /// <summary>What the number above it is worth. ADR-0006 forbids conflating a
+    /// measurement with a guess, and a projection from a sample is neither one
+    /// exactly, so it says precisely what it is.</summary>
+    public string BatchAccuracyNote
+    {
+        get
+        {
+            if (IsMeasuringBatch)
+            {
+                return "Encoding a sample of your images…";
+            }
+
+            return _measuredRatio is not null
+                ? $"Measured by encoding {_measuredSampleCount} of {ImageCount} images at these settings."
+                : "Estimated from file sizes. Recalculate to encode a sample and measure it.";
+        }
+    }
+
+    /// <summary>Discards a measurement that no longer describes the current
+    /// settings. Called from the plan setter, which every setting change routes
+    /// through: a ratio measured at quality 51 says nothing about quality 20, and
+    /// leaving it on screen while the slider moves would be worse than the
+    /// heuristic it replaced.</summary>
+    private void InvalidateMeasurement()
+    {
+        _measureCts?.Cancel();
+        _measuredRatio = null;
+        _measuredSampleCount = 0;
+        IsMeasuringBatch = false;
+    }
+
+    private bool CanMeasureBatch => HasPlan && !IsMeasuringBatch && !IsRunning;
+
+    /// <summary>Encodes a spread of the queue's real images at the current
+    /// settings and projects the measured ratio across the batch.
+    ///
+    /// The heuristic in SizeEstimator is a guess from file sizes, and it can be
+    /// wrong by a factor of two (it was wrong by 2.1× on a GIF batch). The
+    /// encoder next door already knows the truth for one image; this asks it for
+    /// a handful more and believes the answer over the guess.</summary>
+    [RelayCommand(CanExecute = nameof(CanMeasureBatch))]
+    private async Task MeasureBatchAsync()
+    {
+        if (CurrentPlan is not { IsEmpty: false } plan)
+        {
+            return;
+        }
+
+        _measureCts?.Cancel();
+        _measureCts?.Dispose();
+        var cts = _measureCts = new CancellationTokenSource();
+        var token = cts.Token;
+
+        IsMeasuringBatch = true;
+        OnPropertyChanged(nameof(BatchAccuracyNote));
+
+        var samples = PickSamples(plan.Items, MeasurementSampleSize);
+
+        // Snapshot the settings: the user is free to keep dragging while this
+        // runs, and a ratio built from two different quality values is garbage.
+        var quality = Quality;
+        var metadata = StripMetadata ? MetadataPolicy.Strip : MetadataPolicy.Preserve;
+        var resizeEnabled = ResizeEnabled;
+        var resizeMax = ResizeMaxDimensionPixels;
+
+        var measured = await Task.Run(
+            () =>
+            {
+                long sourceBytes = 0;
+                long outputBytes = 0;
+                var count = 0;
+
+                foreach (var item in samples)
+                {
+                    if (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    var result = _previewEncoder.Encode(new PreviewRequest
+                    {
+                        SourcePath = item.SourcePath,
+                        OutputFormat = item.OutputFormat,
+                        Quality = quality,
+                        MetadataPolicy = metadata,
+                        ResizeEnabled = resizeEnabled,
+                        ResizeMaxDimensionPixels = resizeMax,
+                    });
+
+                    // A file the encoder cannot read contributes nothing rather
+                    // than a zero: counting it as free would understate the batch.
+                    if (result is null)
+                    {
+                        continue;
+                    }
+
+                    // EffectiveOutputBytes, not OutputSizeBytes: an encode the
+                    // run would throw away for being bigger (InflationGuard)
+                    // costs the user the original's size, not the encode's.
+                    sourceBytes += result.SourceSizeBytes;
+                    outputBytes += result.EffectiveOutputBytes;
+                    count++;
+                }
+
+                return (SourceBytes: sourceBytes, OutputBytes: outputBytes, Count: count);
+            },
+            token);
+
+        if (token.IsCancellationRequested || !ReferenceEquals(CurrentPlan, plan))
+        {
+            return;
+        }
+
+        if (measured is { Count: > 0, SourceBytes: > 0 })
+        {
+            _measuredRatio = (double)measured.OutputBytes / measured.SourceBytes;
+            _measuredSampleCount = measured.Count;
+        }
+
+        IsMeasuringBatch = false;
+        RaiseEstimateChanged();
+    }
+
+    /// <summary>Takes an even spread across the queue rather than the first N.
+    /// A folder of photos is usually in shot order, so the first eight files are
+    /// eight pictures of the same room in the same light, which is the least
+    /// representative sample available.</summary>
+    private static List<PlannedItem> PickSamples(IReadOnlyList<PlannedItem> items, int count)
+    {
+        if (items.Count <= count)
+        {
+            return [.. items];
+        }
+
+        var step = (double)items.Count / count;
+        var samples = new List<PlannedItem>(count);
+
+        for (var i = 0; i < count; i++)
+        {
+            samples.Add(items[(int)(i * step)]);
+        }
+
+        return samples;
+    }
+
+    private void RaiseEstimateChanged()
+    {
+        OnPropertyChanged(nameof(ProjectedOutputBytes));
+        OnPropertyChanged(nameof(EstimatedSizeText));
+        OnPropertyChanged(nameof(EstimatedSavingsSummary));
+        OnPropertyChanged(nameof(EstimatedOutputIsLarger));
+        OnPropertyChanged(nameof(HasMeasuredBatch));
+        OnPropertyChanged(nameof(BatchAccuracyNote));
+        OnPropertyChanged(nameof(HasInflationWarning));
+        OnPropertyChanged(nameof(InflationWarningText));
+    }
 
     public int FormatFallbackCount => CurrentPlan?.FormatFallbackCount ?? 0;
 
@@ -511,7 +810,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         WorkflowStage.PlanReady => $"{ImageCount} {(ImageCount == 1 ? "image" : "images")} queued",
         WorkflowStage.Running => RunProgress is { } p ? $"Optimizing {p.Completed} of {p.Total}…" : "Optimizing…",
         WorkflowStage.Summary => RunSummary is { } s
-            ? (s.WasCancelled ? "Stopped" : $"Done — {s.SucceededCount} optimized, {s.KeptOriginalCount} unchanged")
+            ? (s.WasCancelled ? "Stopped" : $"Done. {s.SucceededCount} optimized, {s.KeptOriginalCount} unchanged")
             : "Done",
         _ => string.Empty,
     };
@@ -520,7 +819,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         ? []
         : CurrentPlan.Skipped
             .GroupBy(s => s.Reason)
-            .Select(g => $"{g.Count()} file{(g.Count() == 1 ? "" : "s")} skipped — {Describe(g.Key)}")
+            .Select(g => $"{g.Count()} file{(g.Count() == 1 ? "" : "s")} skipped: {Describe(g.Key)}")
             .ToList();
 
     private static string Describe(SkipReason reason) => reason switch
@@ -586,6 +885,25 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _previewSavingsText = string.Empty;
 
+    /// <summary>True when the encode came out *bigger* than the source, which
+    /// ADR-0007 permits only when the user asked for something other than fewer
+    /// bytes — a format conversion (JPEG → GIF will happily double a photo), a
+    /// real resize, or a metadata strip.
+    ///
+    /// It exists so the figure is not painted green. "95% larger" in the success
+    /// colour is not a cosmetic slip; it is the UI congratulating itself for the
+    /// one outcome the user did not want.</summary>
+    [ObservableProperty]
+    private bool _previewSavingsIsLarger;
+
+    partial void OnPreviewSavingsIsLargerChanged(bool value) =>
+        OnPropertyChanged(nameof(PreviewAfterLabel));
+
+    /// <summary>What to call the right-hand pane. "OPTIMIZED" is a claim, and over
+    /// an image that is 38% bigger than the one beside it, a false one — the whole
+    /// complaint that started this. The pane says what the file is.</summary>
+    public string PreviewAfterLabel => PreviewSavingsIsLarger ? "CONVERTED, LARGER" : "OPTIMIZED";
+
     [ObservableProperty]
     private string _previewDimensionsText = string.Empty;
 
@@ -605,40 +923,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     partial void OnOutputPreviewUnavailableNoteChanged(string? value) =>
         OnPropertyChanged(nameof(HasOutputPreviewUnavailableNote));
 
-    /// <summary>Zoom applied to both panes at once. 1.0 fits the image to
-    /// the pane; above that the panes scroll.</summary>
-    [ObservableProperty]
-    private double _zoomFactor = 1.0;
-
-    partial void OnZoomFactorChanged(double value) => OnPropertyChanged(nameof(ZoomLabel));
-
-    public string ZoomLabel => $"{ZoomFactor * 100:0}%";
-
-    /// <summary>Bounds shared by the zoom slider, the menu, and the mouse
-    /// wheel, so all three agree on how far zoom can go.</summary>
-    public const double MinZoom = 0.25;
-
-    public const double MaxZoom = 4.0;
-
-    [RelayCommand]
-    private void ResetZoom() => ZoomFactor = 1.0;
-
-    /// <summary>Multiplicative steps, not additive: a fixed +0.25 crawls at 4×
-    /// and lurches at 0.25×, whereas a constant ratio feels the same at every
-    /// magnification. Same reason the mouse wheel uses a ratio.</summary>
-    [RelayCommand]
-    private void ZoomIn() => ZoomFactor = Math.Min(MaxZoom, ZoomFactor * 1.25);
-
-    [RelayCommand]
-    private void ZoomOut() => ZoomFactor = Math.Max(MinZoom, ZoomFactor / 1.25);
-
-    /// <summary>Nudges zoom by a wheel notch. Lives here rather than in the
-    /// code-behind so the wheel, the menu and the buttons cannot drift apart.</summary>
-    public void NudgeZoom(double delta)
-    {
-        var factor = delta > 0 ? 1.12 : 1 / 1.12;
-        ZoomFactor = Math.Clamp(ZoomFactor * factor, MinZoom, MaxZoom);
-    }
+    // Zoom was removed wholesale (wheel, pan, slider, menu, Ctrl+±). It scaled a
+    // natural-size image inside a ScrollViewer, so the content jumped on wheel,
+    // the pointer anchoring fought the scroll offset, and on a HiDPI display the
+    // image measured at raw pixel size and rendered around 2× too large. The
+    // panes now simply fit the image to the viewport, which is the behaviour the
+    // comparison divider actually needs. Re-adding it means a real image-viewer
+    // surface (scale + offset owned together), not another ScaleTransform.
 
     /// <summary>Drops the selected image from the batch. The plan is rebuilt
     /// from the remaining sources, so every downstream number (totals, output
@@ -773,6 +1064,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             OutputPreviewUnavailableNote = "This image couldn't be previewed.";
             PreviewOutputSizeText = FormatBytes(row.EstimatedOutputBytes);
             PreviewSavingsText = FormatSavings(row.SourceBytes, row.EstimatedOutputBytes);
+            PreviewSavingsIsLarger = row.EstimatedOutputBytes > row.SourceBytes;
             PreviewDimensionsText = string.Empty;
             PreviewAccuracyNote = "Estimated";
             return;
@@ -781,7 +1073,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         var bytes = result.OutputImage;
         SetOutputPreviewImage(TryDecodeBitmap(() => new Bitmap(new MemoryStream(bytes))));
         OutputPreviewUnavailableNote = OutputPreviewImage is null
-            ? $"{FormatRegistry.Get(row.OutputFormat).DisplayName} previews aren't supported on this system — the numbers beside it are still exact."
+            ? $"{FormatRegistry.Get(row.OutputFormat).DisplayName} previews aren't supported on this system. The numbers beside it are still exact."
             : null;
 
         // EffectiveOutputBytes, not OutputSizeBytes: when the encode came out
@@ -791,12 +1083,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         PreviewOutputSizeText = FormatBytes(result.EffectiveOutputBytes);
         PreviewSavingsText = FormatSavings(
             result.SourceSizeBytes, result.EffectiveOutputBytes, approximate: false);
+        PreviewSavingsIsLarger = result.EffectiveOutputBytes > result.SourceSizeBytes;
         PreviewDimensionsText = result.WasResized
             ? $"{result.SourceWidth} × {result.SourceHeight}  →  {result.OutputWidth} × {result.OutputHeight}"
             : $"{result.OutputWidth} × {result.OutputHeight}";
         PreviewAccuracyNote = result.WouldKeepOriginal
-            ? "Exact — original kept, no gain here"
-            : "Exact — this image, encoded";
+            ? "Exact. Original kept, no gain here"
+            : "Exact. This image, encoded";
     }
 
     /// <summary>Swaps the "after" pane's bitmap, publishing the new one
@@ -823,6 +1116,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         PreviewOriginalSizeText = string.Empty;
         PreviewOutputSizeText = string.Empty;
         PreviewSavingsText = string.Empty;
+        PreviewSavingsIsLarger = false;
         PreviewDimensionsText = string.Empty;
         PreviewAccuracyNote = string.Empty;
         OutputPreviewUnavailableNote = null;
@@ -870,8 +1164,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // A Success that grew the file is still a success — the user asked for a
+        // GIF and got a GIF — but it is not an *optimization*, and it does not
+        // get the tick. The engine's outcome and the user's win are two different
+        // questions, and only the row knows how to ask the second one.
         row.Status = result.Outcome switch
         {
+            ItemOutcome.Success when result.OutputBytes > result.SourceBytes => QueueItemStatus.Inflated,
             ItemOutcome.Success => QueueItemStatus.Optimized,
             ItemOutcome.KeptOriginal => QueueItemStatus.Unchanged,
             _ => QueueItemStatus.Failed,
@@ -892,7 +1191,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public string ProgressLabel => RunProgress is null
         ? string.Empty
-        : $"{RunProgress.Completed} of {RunProgress.Total} — {RunProgress.CurrentFileName}";
+        : $"{RunProgress.Completed} of {RunProgress.Total}: {RunProgress.CurrentFileName}";
 
     /// <summary>Bytes per second, measured over the whole run so far. Suppressed
     /// for the first half-second: dividing by a near-zero elapsed time produces
@@ -971,6 +1270,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SummaryOriginalSizeText));
         OnPropertyChanged(nameof(SummaryFinalSizeText));
         OnPropertyChanged(nameof(SummarySavings));
+        OnPropertyChanged(nameof(SummaryOutputIsLarger));
         OnPropertyChanged(nameof(SummarySavingsNote));
         OnPropertyChanged(nameof(HasSummarySavingsNote));
         OnPropertyChanged(nameof(HasFailures));
@@ -988,7 +1288,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             if (summary.WasCancelled)
             {
-                return $"Stopped — {summary.ProcessedCount} of {summary.TotalCount} processed";
+                return $"Stopped. {summary.ProcessedCount} of {summary.TotalCount} processed";
             }
 
             return summary.FailedCount == 0
@@ -1005,7 +1305,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         get
         {
-            if (RunSummary is not { KeptOriginalCount: > 0 } summary)
+            if (RunSummary is not { } summary)
+            {
+                return string.Empty;
+            }
+
+            // Growth is reported first and by name. It is the more surprising of
+            // the two outcomes and the one the user is least likely to have
+            // wanted, so it does not queue behind the kept-originals sentence.
+            if (summary.InflatedCount > 0)
+            {
+                var target = SelectedTargetFormatOption.Id is { } id
+                    ? FormatRegistry.Get(id).DisplayName
+                    : "the format you chose";
+
+                return summary.InflatedCount == summary.ProcessedCount
+                    ? $"These files came out larger than the originals. {target} cannot compress this kind of image. The conversion was done as you asked, but it did not save space."
+                    : $"{summary.InflatedCount} of them came out larger than the originals, because {target} cannot compress that kind of image.";
+            }
+
+            if (summary.KeptOriginalCount == 0)
             {
                 return string.Empty;
             }
@@ -1028,12 +1347,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         ? string.Empty
         : FormatSavings(RunSummary.TotalSourceBytes, RunSummary.TotalOutputBytes);
 
+    /// <summary>The run-level twin of <see cref="PreviewSavingsIsLarger"/>. This
+    /// is not hypothetical: the 615 MB → 886 MB batch recorded in CURRENT_STATE
+    /// would have reported "+44%" in the success colour, at 36px, as the single
+    /// biggest thing on the screen.</summary>
+    public bool SummaryOutputIsLarger =>
+        RunSummary is { } summary && summary.TotalOutputBytes > summary.TotalSourceBytes;
+
     public bool HasFailures => RunSummary is { FailedCount: > 0 };
 
     public IReadOnlyList<string> FailureMessages => RunSummary is null
         ? []
         : RunSummary.Failures
-            .Select(f => $"{Path.GetFileName(f.SourcePath)} — {f.ErrorMessage}")
+            .Select(f => $"{Path.GetFileName(f.SourcePath)}: {f.ErrorMessage}")
             .ToList();
 
     // --- Input handling -------------------------------------------------
@@ -1169,10 +1495,29 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     // --- Execution --------------------------------------------------------
 
+    /// <summary>Asks the user to confirm a run the plan says will make things
+    /// worse. Set by the view, which owns the only thing that can put a dialog on
+    /// screen; null in tests, where the run proceeds unchallenged.
+    ///
+    /// A hook rather than a service so the view model stays testable and knows
+    /// nothing about windows: it states the problem, the view asks the question.</summary>
+    public Func<string, Task<bool>>? ConfirmInflatingRunAsync { get; set; }
+
     [RelayCommand]
     private async Task OptimizeAsync()
     {
         if (CurrentPlan is null || _currentRequest is null)
+        {
+            return;
+        }
+
+        // The last gate before 354 files get written 38% bigger than they were.
+        // Deliberately blocking, and deliberately here rather than in the
+        // executor: the plan already knows, and the moment to say so is before
+        // anything is written, not in a summary afterwards.
+        if (HasInflationWarning &&
+            ConfirmInflatingRunAsync is { } confirm &&
+            !await confirm(InflationWarningText))
         {
             return;
         }
@@ -1227,6 +1572,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         return $"Supports {string.Join(", ", names)}";
     }
 
+    private static string BuildSupportedInputCountSummary()
+    {
+        var count = FormatRegistry.All.Count(f => f.CanDecode);
+        return $"Reads {count} input formats";
+    }
+
     private static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB"];
@@ -1275,6 +1626,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         _runCts?.Dispose();
         _replanDebounceCts?.Dispose();
+        _measureCts?.Dispose();
         _previewCts?.Dispose();
         _thumbnailCts?.Dispose();
         OriginalPreviewImage?.Dispose();

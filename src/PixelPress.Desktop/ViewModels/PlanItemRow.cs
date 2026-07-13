@@ -15,6 +15,14 @@ public enum QueueItemStatus
     /// a success nor a failure, and shown as neither.</summary>
     Unchanged,
 
+    /// <summary>Converted as asked, and came out *bigger* than the source. Only
+    /// reachable through a format conversion, a resize or a metadata strip — the
+    /// three things InflationGuard lets past — so the file is exactly what was
+    /// requested. It is still not an optimization, and it does not get the tick:
+    /// an app that marks a 38%-larger file with a green ✓ is lying to the person
+    /// who asked it to make files smaller.</summary>
+    Inflated,
+
     Failed,
 }
 
@@ -61,12 +69,15 @@ public sealed partial class PlanItemRow : ObservableObject
     {
         OnPropertyChanged(nameof(IsOptimized));
         OnPropertyChanged(nameof(IsUnchanged));
+        OnPropertyChanged(nameof(IsInflated));
         OnPropertyChanged(nameof(IsFailed));
     }
 
     public bool IsOptimized => Status == QueueItemStatus.Optimized;
 
     public bool IsUnchanged => Status == QueueItemStatus.Unchanged;
+
+    public bool IsInflated => Status == QueueItemStatus.Inflated;
 
     public bool IsFailed => Status == QueueItemStatus.Failed;
 

@@ -23,9 +23,27 @@
                     <Color x:Key="AccentSoftColor">#EEF2FF</Color>
                     <Color x:Key="SuccessColor">#047857</Color>
                     <Color x:Key="DangerColor">#DC2626</Color>
+                    <Color x:Key="WarningSoftColor">#FEF2F2</Color>
                     <Color x:Key="StatusBarColor">#EEF0F6</Color>
                     <Color x:Key="PreviewBackdropColor">#E7EAF1</Color>
 
+                    <!--
+                      Overlay chrome floats on top of the user's photo, so it
+                      cannot inherit the pane background. It is the theme's card
+                      surface at ~95% opacity: opaque enough to stay legible over
+                      any image, tinted enough to still read as this app's chrome.
+                      Text on it is TextPrimary/TextSecondary as usual, which is
+                      the whole point of tokenising it — the old hardcoded
+                      #CC000000 painted a black chip with grey text into the
+                      light theme too.
+                    -->
+                    <Color x:Key="OverlayColor">#F2FFFFFF</Color>
+                    <Color x:Key="OverlayStrongColor">#F7FFFFFF</Color>
+                    <Color x:Key="DividerLineColor">#FFFFFFFF</Color>
+
+                    <SolidColorBrush x:Key="OverlayBrush" Color="{StaticResource OverlayColor}" />
+                    <SolidColorBrush x:Key="OverlayStrongBrush" Color="{StaticResource OverlayStrongColor}" />
+                    <SolidColorBrush x:Key="DividerLineBrush" Color="{StaticResource DividerLineColor}" />
                     <SolidColorBrush x:Key="PreviewBackdropBrush" Color="{StaticResource PreviewBackdropColor}" />
                     <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
                     <SolidColorBrush x:Key="CardBrush" Color="{StaticResource CardColor}" />
@@ -37,6 +55,7 @@
                     <SolidColorBrush x:Key="AccentSoftBrush" Color="{StaticResource AccentSoftColor}" />
                     <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}" />
                     <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+                    <SolidColorBrush x:Key="WarningSoftBrush" Color="{StaticResource WarningSoftColor}" />
                     <SolidColorBrush x:Key="StatusBarBrush" Color="{StaticResource StatusBarColor}" />
                 </ResourceDictionary>
 
@@ -51,9 +70,17 @@
                     <Color x:Key="AccentSoftColor">#27272F</Color>
                     <Color x:Key="SuccessColor">#34D399</Color>
                     <Color x:Key="DangerColor">#F87171</Color>
+                    <Color x:Key="WarningSoftColor">#2A1A1D</Color>
                     <Color x:Key="StatusBarColor">#111C33</Color>
                     <Color x:Key="PreviewBackdropColor">#0B1220</Color>
 
+                    <Color x:Key="OverlayColor">#F01B2437</Color>
+                    <Color x:Key="OverlayStrongColor">#F70F172A</Color>
+                    <Color x:Key="DividerLineColor">#FFFFFFFF</Color>
+
+                    <SolidColorBrush x:Key="OverlayBrush" Color="{StaticResource OverlayColor}" />
+                    <SolidColorBrush x:Key="OverlayStrongBrush" Color="{StaticResource OverlayStrongColor}" />
+                    <SolidColorBrush x:Key="DividerLineBrush" Color="{StaticResource DividerLineColor}" />
                     <SolidColorBrush x:Key="PreviewBackdropBrush" Color="{StaticResource PreviewBackdropColor}" />
                     <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
                     <SolidColorBrush x:Key="CardBrush" Color="{StaticResource CardColor}" />
@@ -65,10 +92,23 @@
                     <SolidColorBrush x:Key="AccentSoftBrush" Color="{StaticResource AccentSoftColor}" />
                     <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}" />
                     <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+                    <SolidColorBrush x:Key="WarningSoftBrush" Color="{StaticResource WarningSoftColor}" />
                     <SolidColorBrush x:Key="StatusBarBrush" Color="{StaticResource StatusBarColor}" />
                 </ResourceDictionary>
 
             </ResourceDictionary.ThemeDictionaries>
+
+            <!--
+              Icon set. Filled 24×24 paths rather than emoji: emoji render in
+              whatever the platform's colour font decides, ignore Foreground,
+              and drift between Windows and macOS. These take the theme's text
+              colour like everything else.
+            -->
+            <StreamGeometry x:Key="IconPlus">M11,4 L13,4 L13,11 L20,11 L20,13 L13,13 L13,20 L11,20 L11,13 L4,13 L4,11 L11,11 Z</StreamGeometry>
+            <StreamGeometry x:Key="IconMinus">M4,11 L20,11 L20,13 L4,13 Z</StreamGeometry>
+            <StreamGeometry x:Key="IconFolder">M3.5,4 L9,4 C9.3,4 9.6,4.13 9.8,4.37 L11.4,6.3 L20.5,6.3 C21.33,6.3 22,6.97 22,7.8 L22,18.5 C22,19.33 21.33,20 20.5,20 L3.5,20 C2.67,20 2,19.33 2,18.5 L2,5.5 C2,4.67 2.67,4 3.5,4 Z</StreamGeometry>
+            <StreamGeometry x:Key="IconSun">M12,7 A5,5 0 1,0 12,17 A5,5 0 1,0 12,7 Z M11,2 L13,2 L13,5 L11,5 Z M11,19 L13,19 L13,22 L11,22 Z M2,11 L5,11 L5,13 L2,13 Z M19,11 L22,11 L22,13 L19,13 Z M4.2,5.6 L5.6,4.2 L7.8,6.4 L6.4,7.8 Z M16.2,17.6 L17.6,16.2 L19.8,18.4 L18.4,19.8 Z M17.6,4.2 L19,5.6 L16.8,7.8 L15.4,6.4 Z M4.2,18.4 L6.4,16.2 L7.8,17.6 L5.6,19.8 Z</StreamGeometry>
+            <StreamGeometry x:Key="IconMoon">M21,12.79 A9,9 0 1,1 11.21,3 A7,7 0 0,0 21,12.79 Z</StreamGeometry>
         </ResourceDictionary>
     </Styles.Resources>
 
@@ -98,6 +138,10 @@
         <Setter Property="FontSize" Value="36" />
         <Setter Property="FontWeight" Value="Bold" />
         <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+    </Style>
+    <!-- The run got bigger. Say so in the colour that means it. -->
+    <Style Selector="TextBlock.stat.larger">
+        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
     </Style>
 
     <!-- Cards -->
@@ -337,6 +381,235 @@
     </Style>
     <Style Selector="ListBoxItem:pointerover Border.filmstripCard">
         <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <!-- ================= Shell chrome (M11b) ================= -->
+
+    <Style Selector="Menu">
+        <Setter Property="Padding" Value="6,2" />
+    </Style>
+    <Style Selector="Menu > MenuItem">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Padding" Value="10,5" />
+        <Setter Property="CornerRadius" Value="6" />
+    </Style>
+
+    <!-- Wordmark. Two weights of one line, so it reads as a mark and not as
+         a heading competing with the queue and inspector rails. -->
+    <Style Selector="TextBlock.brand">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+    <Style Selector="TextBlock.brandMark">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <!--
+      Square icon button. Sized to a 32px hit target so the zoom bar's ± are
+      comfortable to hammer, which is exactly what people do with a zoom bar.
+    -->
+    <Style Selector="Button.icon">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="Width" Value="32" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.icon:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+    </Style>
+    <Style Selector="Button.icon:disabled">
+        <Setter Property="Opacity" Value="0.4" />
+    </Style>
+
+    <!-- Icon + label buttons in the toolbar. -->
+    <Style Selector="Button.subtle PathIcon, Button.ghost PathIcon, Button.icon PathIcon">
+        <Setter Property="Width" Value="14" />
+        <Setter Property="Height" Value="14" />
+    </Style>
+
+    <!-- ================= Viewport overlays ================= -->
+
+    <!--
+      Everything that floats over the image shares one surface: the theme's
+      card colour at ~95%, a hairline, and a soft shadow to lift it off the
+      photo. Chips, the statistics strip and the zoom bar are the same
+      material at different radii.
+    -->
+    <Style Selector="Border.overlayChip">
+        <Setter Property="Background" Value="{DynamicResource OverlayBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="Padding" Value="9,4" />
+        <Setter Property="BoxShadow" Value="0 2 10 0 #26000000" />
+    </Style>
+
+    <Style Selector="Border.overlayCard">
+        <Setter Property="Background" Value="{DynamicResource OverlayStrongBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="12" />
+        <Setter Property="BoxShadow" Value="0 8 28 0 #33000000" />
+    </Style>
+
+    <!--
+      The zoom bar (M11b). Permanent, not hover-revealed, and pill-shaped so
+      it reads as one control rather than four loose buttons: zoom was
+      previously a 120px slider tucked in the header, and nobody found it.
+    -->
+    <Style Selector="Border.zoomBar">
+        <Setter Property="Background" Value="{DynamicResource OverlayStrongBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="999" />
+        <Setter Property="Padding" Value="6,5" />
+        <Setter Property="BoxShadow" Value="0 8 28 0 #33000000" />
+    </Style>
+
+    <Style Selector="TextBlock.overlayLabel">
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+    <!-- The "OPTIMIZED" chip when the file is anything but. -->
+    <Style Selector="TextBlock.overlayLabel.larger">
+        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+    </Style>
+
+    <!--
+      A warning the user has to walk past, not a red number they can miss. Used
+      for the pre-flight "this batch will grow" banner in the inspector: the GIF
+      run reported "~35% larger" in the savings colour and nothing else, which
+      turned out to be no warning at all.
+    -->
+    <Style Selector="Border.warning">
+        <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource DangerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="12,10" />
+    </Style>
+    <Style Selector="Border.warning TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="TextBlock.overlayValue">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <!--
+      A savings figure, coloured by which way it actually went. `.larger` is
+      bound to the view model, because "smaller" is the happy path and green is
+      a claim: a JPEG → GIF conversion can double a photo (ADR-0007 allows it —
+      the user asked for a format, not for fewer bytes), and the number must not
+      turn up in the success colour when it does.
+    -->
+    <Style Selector="TextBlock.savings">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" />
+    </Style>
+    <Style Selector="TextBlock.savings.larger">
+        <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+    </Style>
+
+    <!-- Thin rules between the statistics columns and inside the zoom bar. -->
+    <Style Selector="Rectangle.vRule">
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Fill" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+    </Style>
+
+    <!--
+      Numeric readouts — the zoom percentage and the quality value. Tabular
+      figures in a fixed-width box, so the box does not breathe as the number
+      goes 9% → 10% → 100% and the digits do not dance.
+    -->
+    <Style Selector="Border.valueChip">
+        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="8,3" />
+        <Setter Property="MinWidth" Value="52" />
+    </Style>
+    <Style Selector="Border.valueChip > TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="TextAlignment" Value="Center" />
+    </Style>
+
+    <!-- ================= Inspector ================= -->
+
+    <Style Selector="Expander">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+    </Style>
+    <Style Selector="Expander /template/ ToggleButton#ExpanderHeader">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="MinHeight" Value="40" />
+    </Style>
+
+    <Style Selector="ComboBox">
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="MinHeight" Value="34" />
+    </Style>
+
+    <!--
+      Quality scale marks. Decorative only — drawn beneath the track rather
+      than via Slider.TickFrequency, because the slider snaps on ticks and the
+      dial is 1–100: a tick every 12.5 points would quantise the quality
+      itself, which is an engine setting, not a cosmetic one.
+    -->
+    <Style Selector="Rectangle.tick">
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Height" Value="4" />
+        <Setter Property="Fill" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBlock.scaleLabel">
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+    </Style>
+
+    <!-- File-path display: one line, ellipsised, full path on hover. -->
+    <Style Selector="Border.pathChip">
+        <Setter Property="Background" Value="{DynamicResource CanvasBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource HairlineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="8,6" />
+    </Style>
+
+    <!-- ================= Queue ================= -->
+
+    <Style Selector="ListBox.queue ListBoxItem">
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="TextBlock.queueName">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="TextBlock.queueMeta">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
     </Style>
 
 </Styles>

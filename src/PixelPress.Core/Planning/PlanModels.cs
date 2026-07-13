@@ -45,6 +45,17 @@ public sealed record PlannedItem
     /// <summary>True when the output name was auto-suffixed to avoid a
     /// collision with another output or an existing file.</summary>
     public bool RenamedToAvoidConflict { get; init; }
+
+    /// <summary>The plan expects this file to come out *bigger* than it went in.
+    ///
+    /// Only ever true for a conversion the user explicitly asked for: a pure
+    /// re-compression that grows is thrown away by
+    /// <see cref="Processing.InflationGuard"/> and the original kept, so it can
+    /// never reach the disk. This flag is what lets the UI say so before the run
+    /// rather than after it — an "optimizer" that grows a batch by 800 MB must
+    /// ask first, and the only place it can ask is here, while the plan is still
+    /// just a plan.</summary>
+    public bool ExpectedToInflate => EstimatedOutputBytes > SourceBytes;
 }
 
 /// <summary>
@@ -65,6 +76,15 @@ public sealed record JobPlan
     public int FormatFallbackCount => Items.Count(i => i.FormatFallbackApplied);
 
     public int RenamedCount => Items.Count(i => i.RenamedToAvoidConflict);
+
+    /// <summary>How many files this plan expects to grow.</summary>
+    public int InflatingCount => Items.Count(i => i.ExpectedToInflate);
+
+    /// <summary>True when the batch as a whole is expected to end up larger than
+    /// it started. The count above can be non-zero on a batch that still nets a
+    /// saving (a handful of small PNGs among a thousand JPEGs); this is the figure
+    /// that says the run defeats its own purpose.</summary>
+    public bool ExpectedToInflate => TotalEstimatedOutputBytes > TotalSourceBytes;
 
     public bool IsEmpty => Items.Count == 0;
 }

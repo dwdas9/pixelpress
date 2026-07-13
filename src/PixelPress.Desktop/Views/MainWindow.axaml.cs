@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -17,13 +17,13 @@ namespace PixelPress.Desktop.Views;
 /// <summary>
 /// Code-behind handles the parts of the workspace that are inherently
 /// view concepts and carry no engine state: drag-drop and the native
-/// file/folder pickers, the theme toggle, and the comparison divider.
+/// file/folder pickers, the theme toggle, and the viewer controls.
 ///
-/// The divider lives here rather than in the view model on purpose. Its
-/// position is measured in device pixels against a control's current
-/// bounds, means nothing to the planner or the encoder, and must not
-/// survive a re-plan — a view model property would make it look like
-/// part of the job.
+/// The comparison surface's own geometry — the wipe position, the zoom, the
+/// pan — lives inside <see cref="CompareView"/> rather than here or in the
+/// view model. It is measured in device pixels against that control's bounds,
+/// means nothing to the planner or the encoder, and must not survive a
+/// re-plan; a view-model property would make it look like part of the job.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
@@ -36,14 +36,6 @@ public sealed partial class MainWindow : Window
             .ToList(),
     };
 
-    /// <summary>Where the divider sits, as a fraction of the comparison
-    /// surface's width. Kept as a ratio rather than a pixel offset so it
-    /// holds its place when the window resizes, the zoom changes, or a
-    /// differently-shaped image is selected.</summary>
-    private double _dividerRatio = 0.5;
-
-    private bool _isDraggingDivider;
-
     public MainWindow()
     {
         InitializeComponent();
@@ -53,142 +45,86 @@ public sealed partial class MainWindow : Window
         AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
         AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
 
-        // The surface resizes whenever the window, the splitters, the zoom,
-        // or the selected image changes. Each of those invalidates the
-        // divider's pixel position while leaving its ratio correct, so one
-        // handler covers all four.
-        CompareHost.PropertyChanged += (_, e) =>
-        {
-            if (e.Property == BoundsProperty)
-            {
-                LayoutDivider();
-            }
-        };
-
-        // Only the handle grabs the divider. Everything else on the surface is
-        // free for panning — the two gestures would otherwise fight, and
-        // panning is the one you use far more often once zoomed in.
-        DividerHandle.PointerPressed += OnDividerPressed;
-        DividerHandle.PointerMoved += OnDividerMoved;
-        DividerHandle.PointerReleased += OnDividerReleased;
-
-        CompareScroller.PointerPressed += OnPanPressed;
-        CompareScroller.PointerMoved += OnPanMoved;
-        CompareScroller.PointerReleased += OnPanReleased;
-
         // A right-click must act on the row under the cursor, not on whatever
         // was left-clicked last. ListBox does not select on right-press, so the
         // selection is moved here — tunnelling, to land before the ContextMenu
         // opens and reads the selection.
         QueueList.AddHandler(PointerPressedEvent, OnQueuePointerPressed, RoutingStrategies.Tunnel);
+
+        SyncThemeToggle();
+
+        // The view model decides *whether* to ask; the window is the only thing
+        // that can actually ask. DataContext is set by the DI container after
+        // construction, so the hook is attached when it arrives.
+        DataContextChanged += (_, _) =>
+        {
+            if (DataContext is MainWindowViewModel vm)
+            {
+                vm.ConfirmInflatingRunAsync = ConfirmInflatingRunAsync;
+            }
+        };
     }
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
-    // --- Viewport zoom -----------------------------------------------------
-
-    /// <summary>
-    /// Wheel over the preview zooms — with or without Ctrl, since both are
-    /// muscle memory depending on which app you came from.
+    /// <summary>The last thing standing between "Optimize 354 images" and 354
+    /// files written larger than they started.
     ///
-    /// The zoom is anchored to the pointer: whatever pixel is under the cursor
-    /// stays under the cursor. Zooming about the pane's centre instead makes
-    /// the detail you were inspecting slide away exactly when you lean in,
-    /// which is the difference between an image viewer that feels right and
-    /// one that feels broken.
-    ///
-    /// Marked handled so the ScrollViewer does not also scroll.
-    /// </summary>
-    private void OnViewportWheel(object? sender, PointerWheelEventArgs e)
+    /// Deliberately not a toast, not a banner, and not defaulted to Continue: the
+    /// button that opens this says "Optimize", the run does the opposite, and the
+    /// user has to actively agree to that before a single byte is written.</summary>
+    private async Task<bool> ConfirmInflatingRunAsync(string explanation)
     {
-        if (!ViewModel.HasPreview)
+        var confirmed = false;
+
+        var proceed = new Button { Content = "Convert anyway" };
+        proceed.Classes.Add("subtle");
+
+        var cancel = new Button { Content = "Cancel" };
+        cancel.Classes.Add("primary");
+
+        var dialog = new Window
         {
-            return;
-        }
+            Title = "This will not save space",
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = FindThemeBrush("CanvasBrush"),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(22),
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = explanation,
+                        FontSize = 13,
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 8,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Children = { proceed, cancel },
+                    },
+                },
+            },
+        };
 
-        // Content coordinates are unscaled (CompareHost sits inside the zoom
-        // transform), so this point survives the zoom change and can be used to
-        // work out where it must land afterwards.
-        var anchorInContent = e.GetPosition(CompareHost);
-        var anchorInViewport = e.GetPosition(CompareScroller);
-
-        ViewModel.NudgeZoom(e.Delta.Y);
-        var zoom = ViewModel.ZoomFactor;
-
-        // The new offset can only be clamped once layout has run with the new
-        // scale — Extent is stale until then.
-        Dispatcher.UIThread.Post(
-            () => SetScrollOffset(new Vector(
-                (anchorInContent.X * zoom) - anchorInViewport.X,
-                (anchorInContent.Y * zoom) - anchorInViewport.Y)),
-            DispatcherPriority.Loaded);
-
-        e.Handled = true;
-    }
-
-    // --- Pan ---------------------------------------------------------------
-
-    private bool _isPanning;
-    private Point _panStart;
-    private Vector _panOrigin;
-
-    private void OnPanPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (!e.GetCurrentPoint(CompareScroller).Properties.IsLeftButtonPressed ||
-            !ViewModel.HasPreview)
+        proceed.Click += (_, _) =>
         {
-            return;
-        }
+            confirmed = true;
+            dialog.Close();
+        };
 
-        // The handle's own drag wins; it sits on top of the image.
-        if (e.Source is Control source &&
-            source.FindAncestorOfType<Border>(includeSelf: true) == DividerHandle)
-        {
-            return;
-        }
+        cancel.Click += (_, _) => dialog.Close();
 
-        _isPanning = true;
-        _panStart = e.GetPosition(CompareScroller);
-        _panOrigin = CompareScroller.Offset;
-        CompareScroller.Cursor = new Cursor(StandardCursorType.SizeAll);
-        e.Pointer.Capture(CompareScroller);
-    }
+        await dialog.ShowDialog(this);
 
-    private void OnPanMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_isPanning)
-        {
-            return;
-        }
-
-        // Drag right → content moves right → the viewport moves left over it.
-        var current = e.GetPosition(CompareScroller);
-        SetScrollOffset(_panOrigin - (current - _panStart));
-    }
-
-    private void OnPanReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (!_isPanning)
-        {
-            return;
-        }
-
-        _isPanning = false;
-        CompareScroller.Cursor = Cursor.Default;
-        e.Pointer.Capture(null);
-    }
-
-    /// <summary>Applies a scroll offset, clamped to what actually exists.
-    /// An unclamped offset leaves the ScrollViewer showing empty space past
-    /// the edge of the image.</summary>
-    private void SetScrollOffset(Vector offset)
-    {
-        var maxX = Math.Max(0, CompareScroller.Extent.Width - CompareScroller.Viewport.Width);
-        var maxY = Math.Max(0, CompareScroller.Extent.Height - CompareScroller.Viewport.Height);
-
-        CompareScroller.Offset = new Vector(
-            Math.Clamp(offset.X, 0, maxX),
-            Math.Clamp(offset.Y, 0, maxY));
+        return confirmed;
     }
 
     private void OnQueuePointerPressed(object? sender, PointerPressedEventArgs e)
@@ -206,70 +142,21 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // --- Comparison divider ----------------------------------------------
+    // --- Viewer controls ---------------------------------------------------
 
-    private void OnDividerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        _isDraggingDivider = true;
-        e.Pointer.Capture(DividerHandle);
+    // The toolbar and the View menu are two doors into the same four operations,
+    // so they share handlers rather than each owning a copy of the arithmetic —
+    // which lives in CompareView, where the bounds it depends on actually are.
 
-        // Deliberately does *not* snap the divider to the press point: the grab
-        // should pick the divider up where it is, not shift it by the few pixels
-        // between the handle's centre and where the pointer landed on it.
-        e.Handled = true;
-    }
+    private void OnZoomInClick(object? sender, RoutedEventArgs e) => Compare.ZoomIn();
 
-    private void OnDividerMoved(object? sender, PointerEventArgs e)
-    {
-        if (_isDraggingDivider)
-        {
-            SetDividerFromPointer(e);
-        }
-    }
+    private void OnZoomOutClick(object? sender, RoutedEventArgs e) => Compare.ZoomOut();
 
-    private void OnDividerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        _isDraggingDivider = false;
-        e.Pointer.Capture(null);
-    }
+    private void OnFitToWindowClick(object? sender, RoutedEventArgs e) => Compare.FitToWindow();
 
-    /// <summary>Converts the pointer's position into a ratio. Coordinates are
-    /// taken relative to <c>CompareHost</c>, which sits inside the zoom's
-    /// LayoutTransformControl — so the transform is already unwound and the
-    /// divider tracks the pointer at any zoom level.</summary>
-    private void SetDividerFromPointer(PointerEventArgs e)
-    {
-        var width = CompareHost.Bounds.Width;
-        if (width <= 0)
-        {
-            return;
-        }
+    private void OnActualSizeClick(object? sender, RoutedEventArgs e) => Compare.ActualSize();
 
-        var x = e.GetPosition(CompareHost).X;
-        _dividerRatio = Math.Clamp(x / width, 0, 1);
-        LayoutDivider();
-    }
-
-    /// <summary>Publishes the ratio to the three controls that render it: the
-    /// clip band that reveals the optimized image, the divider line, and the
-    /// grab handle.</summary>
-    private void LayoutDivider()
-    {
-        var bounds = CompareHost.Bounds;
-        if (bounds.Width <= 0 || bounds.Height <= 0)
-        {
-            return;
-        }
-
-        var x = bounds.Width * _dividerRatio;
-
-        AfterClip.Width = x;
-
-        Canvas.SetLeft(DividerLine, x - (DividerLine.Width / 2));
-
-        Canvas.SetLeft(DividerHandle, x - (DividerHandle.Width / 2));
-        Canvas.SetTop(DividerHandle, (bounds.Height - DividerHandle.Height) / 2);
-    }
+    private void OnResetViewClick(object? sender, RoutedEventArgs e) => Compare.ResetView();
 
     // --- Drag and drop -----------------------------------------------------
 
@@ -414,13 +301,89 @@ public sealed partial class MainWindow : Window
         var goingDark = app.ActualThemeVariant != ThemeVariant.Dark;
         app.RequestedThemeVariant = goingDark ? ThemeVariant.Dark : ThemeVariant.Light;
 
-        ThemeToggle.Content = goingDark ? "☀️  Light" : "🌙  Dark";
+        SyncThemeToggle();
     }
+
+    /// <summary>Points the toggle at the theme it will switch *to*, which is the
+    /// only reading of a one-button theme switch that people agree on: a sun
+    /// while dark, a moon while light.
+    ///
+    /// Icon rather than the old "🌙  Dark" label — an emoji is drawn by the
+    /// platform's colour font, ignores Foreground, and renders differently on
+    /// Windows and macOS, so it could not be made to match the rest of the
+    /// chrome.</summary>
+    private void SyncThemeToggle()
+    {
+        var isDark = (Application.Current?.ActualThemeVariant ?? ActualThemeVariant) == ThemeVariant.Dark;
+
+        ThemeToggleIcon.Data = FindGeometry(isDark ? "IconSun" : "IconMoon");
+        ToolTip.SetTip(ThemeToggle, isDark ? "Switch to light theme" : "Switch to dark theme");
+    }
+
+    private Geometry? FindGeometry(string key) =>
+        this.TryFindResource(key, out var value) ? value as Geometry : null;
 
     private void OnOpenOutputFolderClick(object? sender, RoutedEventArgs e) =>
         SystemFolders.OpenFolder(ViewModel.OutputDirectory);
 
     private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
+
+    // --- Help ---------------------------------------------------------------
+
+    private void OnUserGuideClick(object? sender, RoutedEventArgs e) =>
+        ProjectLinks.Open(ProjectLinks.UserGuide);
+
+    private void OnProjectWebsiteClick(object? sender, RoutedEventArgs e) =>
+        ProjectLinks.Open(ProjectLinks.Repository);
+
+    private void OnReportIssueClick(object? sender, RoutedEventArgs e) =>
+        ProjectLinks.Open(ProjectLinks.Issues);
+
+    private async void OnAboutClick(object? sender, RoutedEventArgs e) =>
+        await new AboutWindow().ShowDialog(this);
+
+    /// <summary>Help → Keyboard Shortcuts. The list is short on purpose: it holds
+    /// every gesture the app actually binds, and nothing it doesn't. The mouse
+    /// gestures on the comparison surface are listed alongside them — they are
+    /// unlabelled on screen, so this dialog is the only place they are written
+    /// down.</summary>
+    private async void OnKeyboardShortcutsClick(object? sender, RoutedEventArgs e)
+    {
+        (string Keys, string Action)[] shortcuts =
+        [
+            ("Ctrl+O", "Add files to the queue"),
+            ("Ctrl+Shift+O", "Add a folder to the queue"),
+            ("Ctrl+Enter", "Optimize the batch"),
+            ("Delete", "Remove the selected image from the queue"),
+            ("Ctrl+plus / Ctrl+minus", "Zoom the preview in and out"),
+            ("Ctrl+0", "Fit the image to the window"),
+            ("Ctrl+1", "Actual size (100%)"),
+            ("Scroll wheel", "Zoom about the pointer"),
+            ("Drag", "Pan a zoomed image"),
+            ("Drag the divider", "Wipe between original and optimized"),
+            ("Double-click", "Toggle between fit and 100%"),
+        ];
+
+        var rows = new StackPanel { Spacing = 8 };
+
+        foreach (var (keys, action) in shortcuts)
+        {
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("140,*"),
+            };
+
+            var keyText = new TextBlock { Text = keys, FontWeight = FontWeight.SemiBold, FontSize = 12 };
+            var actionText = new TextBlock { Text = action, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+            Grid.SetColumn(actionText, 1);
+
+            row.Children.Add(keyText);
+            row.Children.Add(actionText);
+            rows.Children.Add(row);
+        }
+
+        await ShowInfoDialogAsync("Keyboard shortcuts", rows);
+    }
 
     /// <summary>Help → Supported Formats. Answers the one question the format
     /// registry can answer authoritatively, from the registry itself rather
@@ -430,41 +393,50 @@ public sealed partial class MainWindow : Window
         var decodable = FormatRegistry.All.Where(f => f.CanDecode).Select(f => f.DisplayName);
         var encodable = FormatRegistry.EncodableFormats.Select(f => f.DisplayName);
 
-        var dialog = new Window
+        var body = new StackPanel
         {
-            Title = "Supported formats",
-            Width = 420,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Content = new StackPanel
+            Spacing = 10,
+            Children =
             {
-                Margin = new Thickness(20),
-                Spacing = 10,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "Can open:",
-                        FontWeight = FontWeight.SemiBold,
-                    },
-                    new TextBlock
-                    {
-                        Text = string.Join(", ", decodable),
-                        TextWrapping = TextWrapping.Wrap,
-                    },
-                    new TextBlock
-                    {
-                        Text = "Can save as:",
-                        FontWeight = FontWeight.SemiBold,
-                    },
-                    new TextBlock
-                    {
-                        Text = string.Join(", ", encodable),
-                        TextWrapping = TextWrapping.Wrap,
-                    },
-                },
+                new TextBlock { Text = "Can open:", FontWeight = FontWeight.SemiBold, FontSize = 12 },
+                new TextBlock { Text = string.Join(", ", decodable), TextWrapping = TextWrapping.Wrap, FontSize = 12 },
+                new TextBlock { Text = "Can save as:", FontWeight = FontWeight.SemiBold, FontSize = 12 },
+                new TextBlock { Text = string.Join(", ", encodable), TextWrapping = TextWrapping.Wrap, FontSize = 12 },
             },
         };
+
+        await ShowInfoDialogAsync("Supported formats", body);
+    }
+
+    /// <summary>The shared shell for the small Help dialogs, so they cannot
+    /// drift apart in size, padding or theming. Anything with buttons and its
+    /// own state earns a real window instead — see <see cref="AboutWindow"/>.</summary>
+    private async Task ShowInfoDialogAsync(string title, Control body)
+    {
+        var close = new Button
+        {
+            Content = "Close",
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        close.Classes.Add("subtle");
+
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 440,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = FindThemeBrush("CanvasBrush"),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(22),
+                Spacing = 16,
+                Children = { body, close },
+            },
+        };
+
+        close.Click += (_, _) => dialog.Close();
 
         await dialog.ShowDialog(this);
     }

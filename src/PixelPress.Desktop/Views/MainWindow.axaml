@@ -1,6 +1,7 @@
-<Window xmlns="https://github.com/avaloniaui"
+﻿<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:PixelPress.Desktop.ViewModels"
+        xmlns:views="using:PixelPress.Desktop.Views"
         xmlns:shapes="using:Avalonia.Controls.Shapes"
         x:Class="PixelPress.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
@@ -70,30 +71,45 @@
             </MenuItem>
 
             <MenuItem Header="_View">
-                <!-- Key names must be Avalonia Key enum members, not the
-                     glyphs on the keycaps: OemPlus/OemMinus/D0, never
-                     Plus/Minus/0. KeyGesture.Parse throws at XAML load
-                     otherwise, taking the whole window down at startup. -->
-                <MenuItem Header="Zoom _In"
-                          InputGesture="Ctrl+OemPlus"
-                          Command="{Binding ZoomInCommand}" />
-                <MenuItem Header="Zoom _Out"
-                          InputGesture="Ctrl+OemMinus"
-                          Command="{Binding ZoomOutCommand}" />
-                <MenuItem Header="_Fit to Window"
-                          InputGesture="Ctrl+D0"
-                          Command="{Binding ResetZoomCommand}" />
-                <Separator />
                 <MenuItem Header="Show _All Files"
                           Command="{Binding ShowAllFilesCommand}" />
                 <MenuItem Header="Show Only _Failed"
                           Command="{Binding ShowFailedFilesCommand}" />
                 <Separator />
+                <!--
+                  No InputGesture on these four. The toolbar buttons carry the
+                  HotKeys, and a gesture here would have to be spelled the way
+                  KeyGesture.Parse wants it ("Ctrl+D0", "Ctrl+OemPlus") — which is
+                  both unreadable in a menu and the exact thing that crashed the
+                  app at startup once already.
+                -->
+                <MenuItem Header="Zoom _In" IsEnabled="{Binding HasPreview}" Click="OnZoomInClick" />
+                <MenuItem Header="Zoom _Out" IsEnabled="{Binding HasPreview}" Click="OnZoomOutClick" />
+                <MenuItem Header="_Fit to Window" IsEnabled="{Binding HasPreview}" Click="OnFitToWindowClick" />
+                <MenuItem Header="Actual _Size" IsEnabled="{Binding HasPreview}" Click="OnActualSizeClick" />
+                <MenuItem Header="_Reset View" IsEnabled="{Binding HasPreview}" Click="OnResetViewClick" />
+                <Separator />
                 <MenuItem Header="Toggle _Theme" Click="OnToggleThemeClick" />
             </MenuItem>
 
+            <!--
+              About lives under Help rather than as its own top-level menu:
+              that is where every Windows and Linux user looks for it, and on
+              macOS the platform hoists it into the application menu anyway.
+
+              There is deliberately no "Check for Updates" here yet. The app has
+              no update channel, so the item could only ever be greyed out or
+              lie, and a menu that never lights up is worse than an absent one.
+            -->
             <MenuItem Header="_Help">
+                <MenuItem Header="_User Guide" Click="OnUserGuideClick" />
+                <MenuItem Header="_Keyboard Shortcuts" Click="OnKeyboardShortcutsClick" />
                 <MenuItem Header="_Supported Formats" Click="OnSupportedFormatsClick" />
+                <Separator />
+                <MenuItem Header="_Project Website" Click="OnProjectWebsiteClick" />
+                <MenuItem Header="_Report an Issue" Click="OnReportIssueClick" />
+                <Separator />
+                <MenuItem Header="_About PixelPress" Click="OnAboutClick" />
             </MenuItem>
         </Menu>
 
@@ -103,32 +119,39 @@
                 BorderBrush="{DynamicResource HairlineBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="12,8">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,*,Auto">
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
                     <Button Classes="subtle"
-                            Content="＋  Add files"
                             HotKey="Ctrl+O"
                             ToolTip.Tip="Add images to the queue (Ctrl+O)"
                             IsEnabled="{Binding !IsRunning}"
-                            Click="OnAddFilesClick" />
+                            Click="OnAddFilesClick">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <PathIcon Data="{StaticResource IconPlus}" />
+                            <TextBlock Text="Add files" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <Button Classes="subtle"
-                            Content="🗀  Add folder"
+                            ToolTip.Tip="Add every image in a folder"
                             IsEnabled="{Binding !IsRunning}"
-                            Click="OnAddFolderClick" />
+                            Click="OnAddFolderClick">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <PathIcon Data="{StaticResource IconFolder}" />
+                            <TextBlock Text="Add folder" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <Button Classes="ghost"
                             Content="Clear"
                             IsEnabled="{Binding HasPlan}"
                             Command="{Binding StartOverCommand}" />
                 </StackPanel>
 
-                <Rectangle Grid.Column="1"
-                           Width="1" Margin="10,2"
-                           Fill="{DynamicResource HairlineBrush}" />
+                <!-- Column 1 is the spacer that pushes the batch action right. -->
 
-                <!-- Start and Stop swap on IsRunning, so the primary slot
-                     always holds the one legal batch action. -->
-                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                    <!-- Start and Stop swap on IsRunning, so the primary slot
+                         always holds the one legal batch action. -->
                     <Button Classes="primary"
                             Content="{Binding OptimizeButtonLabel}"
                             HotKey="Ctrl+Return"
@@ -141,14 +164,15 @@
                             IsVisible="{Binding IsRunning}"
                             IsEnabled="{Binding CanCancel}"
                             Command="{Binding CancelRunCommand}" />
-                </StackPanel>
 
-                <Button Grid.Column="4"
-                        x:Name="ThemeToggle"
-                        Classes="ghost"
-                        Content="🌙  Dark"
-                        Margin="8,0,0,0"
-                        Click="OnToggleThemeClick" />
+                    <Button x:Name="ThemeToggle"
+                            Classes="icon"
+                            Margin="4,0,0,0"
+                            VerticalAlignment="Center"
+                            Click="OnToggleThemeClick">
+                        <PathIcon x:Name="ThemeToggleIcon" Width="15" Height="15" />
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -203,6 +227,7 @@
                          overlay; everything else on screen is whole-batch. -->
                     <ListBox Grid.Row="1"
                              x:Name="QueueList"
+                             Classes="queue"
                              Background="Transparent"
                              BorderThickness="0"
                              Padding="6,0"
@@ -227,8 +252,12 @@
 
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:PlanItemRow">
-                                <Grid ColumnDefinitions="Auto,*,Auto"
-                                      Height="46"
+                                <!-- The status column is a fixed width whether or
+                                     not a mark is showing, so the size figures
+                                     line up down the rail instead of jittering
+                                     left as each file finishes. -->
+                                <Grid ColumnDefinitions="Auto,*,Auto,14"
+                                      Height="52"
                                       Margin="0,1"
                                       ToolTip.Tip="{Binding SourcePath}">
 
@@ -236,8 +265,8 @@
                                          placeholder: AVIF and RAW have no
                                          platform decoder, so their rows keep it
                                          for good. -->
-                                    <Panel Grid.Column="0" Width="34" Height="34" VerticalAlignment="Center">
-                                        <Border CornerRadius="6"
+                                    <Panel Grid.Column="0" Width="36" Height="36" VerticalAlignment="Center">
+                                        <Border CornerRadius="7"
                                                 Background="{DynamicResource AccentSoftBrush}">
                                             <TextBlock Text="{Binding OutputFormatName}"
                                                        FontSize="9"
@@ -246,31 +275,34 @@
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center" />
                                         </Border>
-                                        <Border CornerRadius="6" ClipToBounds="True">
+                                        <Border CornerRadius="7" ClipToBounds="True">
                                             <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
                                         </Border>
                                     </Panel>
 
                                     <StackPanel Grid.Column="1"
-                                                Margin="10,0,8,0"
+                                                Margin="11,0,8,0"
                                                 VerticalAlignment="Center"
-                                                Spacing="1">
+                                                Spacing="2">
                                         <TextBlock Text="{Binding FileName}"
-                                                   FontSize="13"
+                                                   Classes="queueName"
                                                    TextTrimming="CharacterEllipsis" />
                                         <TextBlock Text="{Binding FormatSummary}"
-                                                   Classes="caption"
+                                                   Classes="queueMeta"
                                                    TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
 
-                                    <StackPanel Grid.Column="2"
-                                                Orientation="Horizontal"
-                                                Spacing="6"
-                                                VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding SizeText}" Classes="caption" />
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding SizeText}"
+                                               Classes="queueMeta"
+                                               VerticalAlignment="Center"
+                                               TextAlignment="Right" />
+
+                                    <Panel Grid.Column="3" VerticalAlignment="Center">
                                         <TextBlock Text="✓"
                                                    FontSize="13"
                                                    FontWeight="Bold"
+                                                   HorizontalAlignment="Right"
                                                    Foreground="{DynamicResource SuccessBrush}"
                                                    IsVisible="{Binding IsOptimized}" />
                                         <!-- Kept as-is: encoded fine, but no
@@ -278,16 +310,27 @@
                                         <TextBlock Text="="
                                                    FontSize="13"
                                                    FontWeight="Bold"
+                                                   HorizontalAlignment="Right"
                                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                                    IsVisible="{Binding IsUnchanged}"
-                                                   ToolTip.Tip="Already as small as this quality setting can make it — the original was kept." />
+                                                   ToolTip.Tip="Already as small as this quality setting can make it, so the original was kept." />
+                                        <!-- Converted as asked, and bigger for
+                                             it. Emphatically not a green tick. -->
+                                        <TextBlock Text="▲"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"
+                                                   HorizontalAlignment="Right"
+                                                   Foreground="{DynamicResource DangerBrush}"
+                                                   IsVisible="{Binding IsInflated}"
+                                                   ToolTip.Tip="Larger than the original. The conversion you asked for cannot compress this image." />
                                         <TextBlock Text="!"
                                                    FontSize="13"
                                                    FontWeight="Bold"
+                                                   HorizontalAlignment="Right"
                                                    Foreground="{DynamicResource DangerBrush}"
                                                    IsVisible="{Binding IsFailed}"
                                                    ToolTip.Tip="{Binding ErrorMessage}" />
-                                    </StackPanel>
+                                    </Panel>
                                 </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
@@ -308,14 +351,19 @@
             <!-- ===== Center: viewport ===== -->
             <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto">
 
-                <!-- Which image, and how exact its numbers are -->
+                <!--
+                  Which image, and how you are looking at it. The view controls
+                  live in the header rather than floating over the photo: they are
+                  chrome for the viewport, they are needed at every zoom level, and
+                  a bar that only appears on hover is a bar nobody finds.
+                -->
                 <Border Grid.Row="0"
-                        Padding="16,10"
+                        Padding="16,8,12,8"
                         IsVisible="{Binding HasPreview}"
                         BorderBrush="{DynamicResource HairlineBrush}"
                         BorderThickness="0,0,0,1">
                     <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel Grid.Column="0" Spacing="1">
+                        <StackPanel Grid.Column="0" Spacing="1" VerticalAlignment="Center">
                             <TextBlock Text="{Binding PreviewFileName}"
                                        FontSize="13"
                                        FontWeight="SemiBold"
@@ -323,36 +371,71 @@
                             <TextBlock Text="{Binding PreviewDimensionsText}" Classes="caption" />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="{Binding ZoomLabel}"
-                                       Classes="caption"
-                                       VerticalAlignment="Center"
-                                       Width="42"
-                                       TextAlignment="Right" />
-                            <Slider x:Name="ZoomSlider"
-                                    Width="120"
-                                    Minimum="0.25" Maximum="4"
-                                    VerticalAlignment="Center"
-                                    Value="{Binding ZoomFactor}" />
+                        <!-- Zoom is a scale, so it reads out as one: the − and +
+                             bracket the figure they change, and the figure is a
+                             fixed-width chip so it does not breathe from 9% to
+                             100% and shove the buttons around. -->
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    Spacing="4"
+                                    VerticalAlignment="Center">
+                            <Button Classes="icon"
+                                    HotKey="Ctrl+OemMinus"
+                                    ToolTip.Tip="Zoom out (Ctrl+−)"
+                                    Click="OnZoomOutClick">
+                                <PathIcon Data="{StaticResource IconMinus}" />
+                            </Button>
+
+                            <Border Classes="valueChip">
+                                <TextBlock Text="{Binding #Compare.ZoomText}" />
+                            </Border>
+
+                            <Button Classes="icon"
+                                    HotKey="Ctrl+OemPlus"
+                                    ToolTip.Tip="Zoom in (Ctrl++)"
+                                    Click="OnZoomInClick">
+                                <PathIcon Data="{StaticResource IconPlus}" />
+                            </Button>
+
+                            <Rectangle Classes="vRule" Margin="6,6" />
+
+                            <!-- Fit greys out once the view is already fitted:
+                                 a button that does nothing should say so. -->
                             <Button Classes="ghost"
                                     Content="Fit"
-                                    Command="{Binding ResetZoomCommand}" />
+                                    Padding="10,5"
+                                    HotKey="Ctrl+D0"
+                                    IsEnabled="{Binding !#Compare.IsFitToWindow}"
+                                    ToolTip.Tip="Fit the whole image in the window (Ctrl+0)"
+                                    Click="OnFitToWindowClick" />
+                            <Button Classes="ghost"
+                                    Content="100%"
+                                    Padding="10,5"
+                                    HotKey="Ctrl+D1"
+                                    ToolTip.Tip="Actual size, one image pixel per screen pixel (Ctrl+1). The only honest way to judge compression artefacts."
+                                    Click="OnActualSizeClick" />
+                            <Button Classes="ghost"
+                                    Content="Reset"
+                                    Padding="10,5"
+                                    ToolTip.Tip="Re-centre the image and put the divider back in the middle"
+                                    Click="OnResetViewClick" />
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <!-- The comparison surface. Both panes render the same image
-                     box; the "after" pane is clipped to a band whose width the
-                     code-behind drives from the handle (Phase 2). -->
-                <Border Grid.Row="1" Classes="pane" Margin="16"
-                        PointerWheelChanged="OnViewportWheel">
+                <!--
+                  The comparison surface. One custom-rendered control (CompareView)
+                  draws both bitmaps into the same destination rect, wipes between
+                  them with a render-time clip, and owns the zoom and the pan. See
+                  CompareView.cs for why this is not two Images in a Border: the
+                  short version is that expressing a wipe as layout re-fits the
+                  image on every pointer move, and two images that each fit
+                  themselves do not land in the same place.
+                -->
+                <Border Grid.Row="1" Classes="pane" Margin="16">
                     <Panel>
                         <Panel.ContextMenu>
                             <ContextMenu>
-                                <MenuItem Header="Zoom In" Command="{Binding ZoomInCommand}" />
-                                <MenuItem Header="Zoom Out" Command="{Binding ZoomOutCommand}" />
-                                <MenuItem Header="Fit to Window" Command="{Binding ResetZoomCommand}" />
-                                <Separator />
                                 <MenuItem Header="Remove From Queue"
                                           Command="{Binding RemoveSelectedCommand}" />
                                 <MenuItem Header="Show in File Manager"
@@ -360,120 +443,100 @@
                             </ContextMenu>
                         </Panel.ContextMenu>
 
-                        <ScrollViewer x:Name="CompareScroller"
-                                      HorizontalScrollBarVisibility="Auto"
-                                      VerticalScrollBarVisibility="Auto"
-                                      IsVisible="{Binding HasPreview}">
-                            <LayoutTransformControl HorizontalAlignment="Center"
-                                                    VerticalAlignment="Center">
-                                <LayoutTransformControl.LayoutTransform>
-                                    <ScaleTransform ScaleX="{Binding ZoomFactor}"
-                                                    ScaleY="{Binding ZoomFactor}" />
-                                </LayoutTransformControl.LayoutTransform>
-
-                                <Panel x:Name="CompareHost" MinWidth="240" MinHeight="240">
-
-                                    <Image Source="{Binding OriginalPreviewImage}" Stretch="Uniform" />
-
-                                    <!-- AfterClip.Width is set imperatively on drag;
-                                         the inner Image keeps the host's full box so
-                                         clipping reveals rather than squeezes it. -->
-                                    <Border x:Name="AfterClip"
-                                            HorizontalAlignment="Left"
-                                            ClipToBounds="True">
-                                        <Image Source="{Binding OutputPreviewImage}"
-                                               Stretch="Uniform"
-                                               HorizontalAlignment="Left"
-                                               Width="{Binding #CompareHost.Bounds.Width}"
-                                               Height="{Binding #CompareHost.Bounds.Height}" />
-                                    </Border>
-
-                                    <!-- No Background on the Canvas, and the line
-                                         is not hit-testable: only the handle
-                                         itself grabs the divider. A transparent
-                                         full-surface layer would swallow every
-                                         press and make panning impossible. -->
-                                    <Canvas x:Name="HandleLayer">
-                                        <shapes:Rectangle x:Name="DividerLine"
-                                                          Width="2"
-                                                          Height="{Binding #CompareHost.Bounds.Height}"
-                                                          Fill="White"
-                                                          Opacity="0.9"
-                                                          IsHitTestVisible="False" />
-                                        <Border x:Name="DividerHandle"
-                                                Width="28" Height="28"
-                                                CornerRadius="14"
-                                                Background="White"
-                                                BoxShadow="0 2 8 0 #40000000"
-                                                Cursor="SizeWestEast"
-                                                ToolTip.Tip="Drag to compare">
-                                            <TextBlock Text="⇄"
-                                                       Foreground="#0F172A"
-                                                       FontSize="13"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center" />
-                                        </Border>
-                                    </Canvas>
-                                </Panel>
-                            </LayoutTransformControl>
-                        </ScrollViewer>
+                        <views:CompareView x:Name="Compare"
+                                           IsVisible="{Binding HasPreview}"
+                                           BeforeImage="{Binding OriginalPreviewImage}"
+                                           AfterImage="{Binding OutputPreviewImage}"
+                                           DividerBrush="{DynamicResource DividerLineBrush}"
+                                           HandleBackground="{DynamicResource OverlayStrongBrush}"
+                                           HandleBorderBrush="{DynamicResource HairlineBrush}"
+                                           HandleForeground="{DynamicResource AccentBrush}" />
 
                         <!-- Floating pane labels -->
-                        <Border IsVisible="{Binding HasPreview}"
+                        <Border Classes="overlayChip"
+                                IsVisible="{Binding HasPreview}"
                                 HorizontalAlignment="Left" VerticalAlignment="Top"
-                                Margin="12" Padding="8,4" CornerRadius="6"
-                                Background="#99000000">
-                            <TextBlock Text="ORIGINAL" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                                Margin="12">
+                            <TextBlock Classes="overlayLabel" Text="ORIGINAL" />
                         </Border>
-                        <Border IsVisible="{Binding HasPreview}"
+                        <!-- Not always "OPTIMIZED": see PreviewAfterLabel. -->
+                        <Border Classes="overlayChip"
+                                IsVisible="{Binding HasPreview}"
                                 HorizontalAlignment="Right" VerticalAlignment="Top"
-                                Margin="12" Padding="8,4" CornerRadius="6"
-                                Background="#99000000">
-                            <TextBlock Text="OPTIMIZED" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                                Margin="12">
+                            <TextBlock Classes="overlayLabel"
+                                       Classes.larger="{Binding PreviewSavingsIsLarger}"
+                                       Text="{Binding PreviewAfterLabel}" />
                         </Border>
 
-                        <!-- Statistics overlay. PreviewAccuracyNote says whether
-                             these bytes were measured or estimated — ADR-0006
-                             forbids conflating the two. -->
-                        <Border IsVisible="{Binding HasPreview}"
-                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                                Margin="16" Padding="18,12" CornerRadius="12"
-                                Background="#CC000000">
-                            <StackPanel Orientation="Horizontal" Spacing="22">
-                                <StackPanel Spacing="1">
-                                    <TextBlock Text="Original" FontSize="10" Foreground="#94A3B8" />
-                                    <TextBlock Text="{Binding PreviewOriginalSizeText}"
-                                               FontSize="15" FontWeight="SemiBold" Foreground="White" />
-                                </StackPanel>
-                                <StackPanel Spacing="1">
-                                    <TextBlock Text="Optimized" FontSize="10" Foreground="#94A3B8" />
-                                    <TextBlock Text="{Binding PreviewOutputSizeText}"
-                                               FontSize="15" FontWeight="SemiBold" Foreground="White" />
-                                </StackPanel>
-                                <StackPanel Spacing="1">
-                                    <TextBlock Text="{Binding PreviewAccuracyNote}"
-                                               FontSize="10" Foreground="#94A3B8" />
-                                    <TextBlock Text="{Binding PreviewSavingsText}"
-                                               FontSize="15" FontWeight="Bold"
-                                               Foreground="{DynamicResource SuccessBrush}" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
+                        <!-- Statistics, docked to the bottom of the image it
+                             describes. PreviewAccuracyNote says whether these
+                             bytes were measured or estimated — ADR-0006 forbids
+                             conflating the two, so it gets its own line rather
+                             than being crammed in as a column heading, where it
+                             used to knock the three figures out of alignment. -->
+                        <StackPanel IsVisible="{Binding HasPreview}"
+                                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                    Margin="16">
 
-                        <Border IsVisible="{Binding IsPreviewBusy}"
+                            <Border Classes="overlayCard" HorizontalAlignment="Center">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="18,12,18,11">
+                                        <StackPanel MinWidth="88" Spacing="3">
+                                            <TextBlock Classes="overlayLabel" Text="ORIGINAL" />
+                                            <TextBlock Classes="overlayValue"
+                                                       Text="{Binding PreviewOriginalSizeText}" />
+                                        </StackPanel>
+
+                                        <Rectangle Classes="vRule" Margin="14,2" />
+
+                                        <StackPanel MinWidth="88" Spacing="3">
+                                            <TextBlock Classes="overlayLabel" Text="OPTIMIZED" />
+                                            <TextBlock Classes="overlayValue"
+                                                       Text="{Binding PreviewOutputSizeText}" />
+                                        </StackPanel>
+
+                                        <Rectangle Classes="vRule" Margin="14,2" />
+
+                                        <StackPanel MinWidth="108" Spacing="3">
+                                            <TextBlock Classes="overlayLabel" Text="SIZE DIFFERENCE" />
+                                            <!-- Green only when it is actually
+                                                 smaller. A GIF conversion can
+                                                 double a photo, and ADR-0007 lets
+                                                 it, so this figure can legitimately
+                                                 read "95% larger" — which must not
+                                                 arrive in the success colour. -->
+                                            <TextBlock Classes="savings"
+                                                       Classes.larger="{Binding PreviewSavingsIsLarger}"
+                                                       Text="{Binding PreviewSavingsText}" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <Border BorderBrush="{DynamicResource HairlineBrush}"
+                                            BorderThickness="0,1,0,0"
+                                            Padding="18,7">
+                                        <TextBlock Classes="caption"
+                                                   HorizontalAlignment="Center"
+                                                   Text="{Binding PreviewAccuracyNote}" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <Border Classes="overlayChip"
+                                IsVisible="{Binding IsPreviewBusy}"
                                 HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                Margin="16" Padding="10,6" CornerRadius="8"
-                                Background="#CC000000">
-                            <TextBlock Text="Encoding…" FontSize="11" Foreground="White" />
+                                Margin="16">
+                            <TextBlock Text="Encoding…" Classes="caption" />
                         </Border>
 
                         <!-- Encode succeeded, but no decoder here can show it -->
-                        <Border IsVisible="{Binding HasOutputPreviewUnavailableNote}"
+                        <Border Classes="overlayCard"
+                                IsVisible="{Binding HasOutputPreviewUnavailableNote}"
                                 HorizontalAlignment="Center" VerticalAlignment="Center"
-                                MaxWidth="360" Padding="16,12" CornerRadius="10"
-                                Background="#CC000000">
+                                MaxWidth="360" Padding="16,12">
                             <TextBlock Text="{Binding OutputPreviewUnavailableNote}"
-                                       FontSize="12" Foreground="White"
+                                       Classes="caption"
                                        TextWrapping="Wrap" TextAlignment="Center" />
                         </Border>
 
@@ -539,6 +602,7 @@
                                      36px stat. Wrapping stays as a backstop. -->
                                 <TextBlock Text="{Binding SummarySavings}"
                                            Classes="stat"
+                                           Classes.larger="{Binding SummaryOutputIsLarger}"
                                            HorizontalAlignment="Center"
                                            TextWrapping="Wrap"
                                            TextAlignment="Center" />
@@ -635,28 +699,106 @@
                                         </DataTemplate>
                                     </ComboBox.ItemTemplate>
                                 </ComboBox>
-                                <TextBlock Classes="caption"
-                                           TextWrapping="Wrap"
-                                           Text="{Binding SupportedInputSummary}" />
+
+                                <!-- The eleven-format "Supports JPEG, PNG, WebP,
+                                     …" blob used to wrap to four lines here and
+                                     bury the one control that matters. It is a
+                                     reference list, so it lives behind the Help
+                                     dialog that already renders it from the
+                                     registry — count here, list on demand. -->
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0"
+                                               Classes="caption"
+                                               VerticalAlignment="Center"
+                                               Text="{Binding SupportedInputCountSummary}" />
+                                    <Button Grid.Column="1"
+                                            Classes="ghost"
+                                            Content="View all"
+                                            Padding="8,3"
+                                            FontSize="11"
+                                            Click="OnSupportedFormatsClick" />
+                                </Grid>
                             </StackPanel>
                         </Expander>
 
                         <Expander Header="Quality" IsExpanded="True">
-                            <StackPanel Spacing="6" Margin="0,6,0,2">
-                                <Grid ColumnDefinitions="*,Auto">
+                            <!--
+                              The value and its name never share a line's worth of
+                              space and never move: the name sits in a left column
+                              that is free to ellipsise, the number in a fixed-width
+                              chip on the right. They used to be two TextBlocks in a
+                              *,Auto grid, so "Near-original" grew until it collided
+                              with the digits.
+                            -->
+                            <StackPanel Spacing="8" Margin="0,6,0,2">
+                                <!--
+                                  The whole dial goes dead for a target that has
+                                  no quality knob (GIF, PNG, BMP, TIFF). It used
+                                  to stay live and do nothing, which is how a user
+                                  ends up dragging quality to 8% to shrink a GIF
+                                  batch and watching it grow anyway.
+                                -->
+                                <TextBlock Classes="caption"
+                                           IsVisible="{Binding !QualityAppliesToTarget}"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource DangerBrush}"
+                                           Text="{Binding QualityIgnoredNote}" />
+
+                                <!--
+                                  The dial is hidden, not merely greyed, for a
+                                  target that ignores it. A disabled slider still
+                                  printed "Preset: Near-original", "95%" and a
+                                  sentence about how much compression to expect,
+                                  directly beneath a warning that none of it
+                                  applies. Two of those three things were simply
+                                  false for GIF. Say the one true thing instead.
+                                -->
+                                <Grid ColumnDefinitions="*,Auto"
+                                      IsVisible="{Binding QualityAppliesToTarget}">
                                     <TextBlock Grid.Column="0"
                                                Classes="caption"
-                                               Text="{Binding QualityLabel}"
-                                               VerticalAlignment="Center" />
-                                    <TextBlock Grid.Column="1"
-                                               Text="{Binding Quality}"
-                                               FontWeight="SemiBold"
-                                               FontSize="13" />
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,10,0"
+                                               TextTrimming="CharacterEllipsis"
+                                               Text="{Binding QualityLabel, StringFormat='Preset: {0}'}" />
+                                    <Border Grid.Column="1" Classes="valueChip">
+                                        <TextBlock Text="{Binding Quality, StringFormat='{}{0}%'}" />
+                                    </Border>
                                 </Grid>
-                                <Slider Minimum="1" Maximum="100"
-                                        TickFrequency="1"
-                                        IsSnapToTickEnabled="True"
-                                        Value="{Binding Quality}" />
+
+                                <StackPanel Spacing="0" IsVisible="{Binding QualityAppliesToTarget}">
+                                    <Slider Minimum="1" Maximum="100"
+                                            TickFrequency="1"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding Quality}" />
+
+                                    <UniformGrid Columns="9" Margin="9,0,9,5">
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                        <Rectangle Classes="tick" />
+                                    </UniformGrid>
+
+                                    <!--
+                                      One line that moves with the slider, in
+                                      place of a fixed three-column scale
+                                      ("Smaller file | Balanced | Near-original").
+                                      The scale said the same thing at every
+                                      value, so it never told the user where they
+                                      were, and in a 340px rail its three labels
+                                      collided into one unreadable run of words.
+                                    -->
+                                    <TextBlock Classes="scaleLabel"
+                                               Margin="0,4,0,0"
+                                               MinHeight="28"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding QualityDescription}" />
+                                </StackPanel>
                             </StackPanel>
                         </Expander>
 
@@ -689,36 +831,117 @@
                             <StackPanel Spacing="8" Margin="0,6,0,2">
                                 <CheckBox Content="Overwrite originals"
                                           IsChecked="{Binding OverwriteOriginals}" />
-                                <StackPanel Spacing="6" IsVisible="{Binding ShowOutputFolderControl}">
-                                    <TextBlock Text="{Binding OutputDirectory}"
-                                               Classes="caption"
-                                               TextWrapping="Wrap" />
+                                <StackPanel Spacing="7" IsVisible="{Binding ShowOutputFolderControl}">
+                                    <!-- One line, ellipsised from the left so the
+                                         folder name survives and the drive letter
+                                         is what gets cut. A wrapped absolute path
+                                         was taking three lines of the rail. -->
+                                    <Border Classes="pathChip" ToolTip.Tip="{Binding OutputDirectory}">
+                                        <TextBlock Text="{Binding OutputDirectory}"
+                                                   Classes="caption"
+                                                   TextTrimming="LeadingCharacterEllipsis" />
+                                    </Border>
                                     <Button Classes="subtle"
                                             Content="Change folder…"
+                                            HorizontalContentAlignment="Center"
                                             HorizontalAlignment="Stretch"
                                             Click="OnChangeOutputFolderClick" />
                                 </StackPanel>
                             </StackPanel>
                         </Expander>
 
+                        <!--
+                          The batch is going to get bigger. Said in words, in
+                          bytes, above the estimate rather than inside it — and
+                          repeated as a blocking confirmation when Optimize is
+                          pressed, because a banner in a rail is still something
+                          a user can scroll past.
+                        -->
+                        <Border Classes="warning"
+                                Margin="0,8,0,0"
+                                IsVisible="{Binding HasInflationWarning}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="This will not save space"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource DangerBrush}" />
+                                <TextBlock Text="{Binding InflationWarningText}" Classes="caption" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- Whole-batch estimate. Distinct from the viewport
                              overlay, which reports one exactly-encoded image. -->
                         <Border Classes="reservedSlot" Margin="0,8,0,0" IsVisible="{Binding HasPlan}">
-                            <StackPanel Spacing="4">
-                                <TextBlock Classes="railHeading" Text="BATCH ESTIMATE" />
-                                <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Spacing="6">
+                                <TextBlock Classes="railHeading" Text="BATCH SIZE" />
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                                     <TextBlock Grid.Column="0" Text="Original" Classes="caption" />
-                                    <TextBlock Grid.Column="1" Text="{Binding OriginalSizeText}" FontSize="12" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding OriginalSizeText}"
+                                               FontSize="12"
+                                               FontWeight="Medium"
+                                               TextAlignment="Right" />
                                 </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Text="Estimated" Classes="caption" />
-                                    <TextBlock Grid.Column="1" Text="{Binding EstimatedSizeText}" FontSize="12" />
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <!-- The row's own label says which of the two
+                                         numbers this is: a guess from file sizes,
+                                         or bytes an encoder actually produced. -->
+                                    <TextBlock Grid.Column="0"
+                                               Classes="caption"
+                                               Text="Estimated"
+                                               IsVisible="{Binding !HasMeasuredBatch}" />
+                                    <TextBlock Grid.Column="0"
+                                               Classes="caption"
+                                               Text="Measured"
+                                               IsVisible="{Binding HasMeasuredBatch}" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding EstimatedSizeText}"
+                                               FontSize="12"
+                                               FontWeight="Medium"
+                                               TextAlignment="Right" />
                                 </Grid>
-                                <TextBlock Text="{Binding EstimatedSavingsSummary}"
-                                           FontSize="13"
-                                           FontWeight="SemiBold"
-                                           Foreground="{DynamicResource SuccessBrush}"
-                                           TextWrapping="Wrap" />
+                                <Border BorderBrush="{DynamicResource HairlineBrush}"
+                                        BorderThickness="0,1,0,0"
+                                        Padding="0,6,0,0">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="Total reduction"
+                                                   Classes="caption"
+                                                   VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1"
+                                                   Classes="savings"
+                                                   Classes.larger="{Binding EstimatedOutputIsLarger}"
+                                                   Text="{Binding EstimatedSavingsSummary}"
+                                                   FontSize="13"
+                                                   TextAlignment="Right" />
+                                    </Grid>
+                                </Border>
+
+                                <!--
+                                  Recalculate encodes a spread of the real images
+                                  at the current settings and projects what it
+                                  measures across the batch. The figures above are
+                                  otherwise a heuristic over file sizes, which was
+                                  off by 2.1× on a GIF batch, and no colour on a
+                                  wrong number makes it right.
+                                -->
+                                <TextBlock Classes="caption"
+                                           Margin="0,2,0,0"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding BatchAccuracyNote}" />
+
+                                <Button Classes="subtle"
+                                        Content="Recalculate"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Center"
+                                        IsVisible="{Binding !IsMeasuringBatch}"
+                                        Command="{Binding MeasureBatchCommand}"
+                                        ToolTip.Tip="Encode a sample of these images at the current quality and measure the real result" />
+                                <Button Classes="subtle"
+                                        Content="Measuring…"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Center"
+                                        IsEnabled="False"
+                                        IsVisible="{Binding IsMeasuringBatch}" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

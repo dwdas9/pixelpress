@@ -78,6 +78,15 @@ public sealed record ExecutionSummary
     /// <summary>Files already as small as we can make them, left untouched.</summary>
     public int KeptOriginalCount => Results.Count(r => r.Outcome == ItemOutcome.KeptOriginal);
 
+    /// <summary>Files that were written, as requested, larger than they started.
+    /// Only reachable through the three exemptions in
+    /// <see cref="Processing.InflationGuard"/> — a format conversion, a real
+    /// resize, or a metadata strip. The summary owes the user this number: it is
+    /// the difference between "we optimized 354 images" and what actually
+    /// happened.</summary>
+    public int InflatedCount => Results.Count(r =>
+        r.Outcome == ItemOutcome.Success && r.OutputBytes > r.SourceBytes);
+
     /// <summary>Everything that ended with a usable file in the output —
     /// re-encoded or kept. The complement of <see cref="FailedCount"/>.</summary>
     public int ProcessedCount => TotalCount - FailedCount;
