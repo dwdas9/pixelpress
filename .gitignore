@@ -7,3 +7,5 @@ obj/
 *.DotSettings.user
 TestResults/
 artifacts/
+# Added by code-review-graph
+.code-review-graph/
